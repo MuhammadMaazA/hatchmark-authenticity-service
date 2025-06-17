@@ -40,6 +40,7 @@ This allows anyone to later verify a piece of content against the ledger to conf
 ---
 
 ## 📂 Project Structure
+
 .
 ├── backend/          # Serverless components (API handlers, Lambda functions)
 ├── watermarker/      # Dockerized application for heavy processing
