@@ -1,0 +1,288 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Hatchmark Authenticity Service - Core Infrastructure'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'hatchmark'
+    Description: Name of the project for resource naming
+  
+  Environment:
+    Type: String
+    Default: 'dev'
+    AllowedValues: ['dev', 'staging', 'prod']
+    Description: Environment name
+
+Resources:
+  # S3 Buckets
+  IngestionBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-ingestion-bucket-${Environment}-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt ComputePhashFunction.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: uploads/
+
+  ProcessedBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-processed-bucket-${Environment}-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  # QLDB Ledger
+  HatchmarkLedger:
+    Type: AWS::QLDB::Ledger
+    Properties:
+      Name: !Sub '${ProjectName}-ledger-${Environment}'
+      PermissionsMode: STANDARD
+      DeletionPolicy: PROTECT
+
+  # SQS Queue for Watermarking
+  WatermarkingQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${ProjectName}-watermarking-queue-${Environment}'
+      VisibilityTimeoutSeconds: 900  # 15 minutes (max Lambda execution time)
+      MessageRetentionPeriod: 1209600  # 14 days
+      DelaySeconds: 0
+      ReceiveMessageWaitTimeSeconds: 20  # Long polling
+
+  # IAM Roles
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-lambda-execution-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                Resource:
+                  - !Sub '${IngestionBucket}/*'
+                  - !Sub '${ProcessedBucket}/*'
+        - PolicyName: QLDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - qldb:SendCommand
+                Resource: !Sub '${HatchmarkLedger}/*'
+        - PolicyName: SQSAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !Ref WatermarkingQueue
+
+  # Lambda Functions
+  GeneratePresignedUrlFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-generatePresignedUrl-${Environment}'
+      Runtime: python3.11
+      Handler: handlers.generate_presigned_url
+      Code:
+        ZipFile: |
+          # Placeholder - deploy with actual code
+          def lambda_handler(event, context):
+              return {'statusCode': 200, 'body': 'Not implemented'}
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          S3_BUCKET: !Ref IngestionBucket
+
+  ComputePhashFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-computePhash-${Environment}'
+      Runtime: python3.11
+      Handler: handlers.compute_phash
+      Code:
+        ZipFile: |
+          # Placeholder - deploy with actual code
+          def lambda_handler(event, context):
+              return {'statusCode': 200, 'body': 'Not implemented'}
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 300  # 5 minutes
+
+  WriteToLedgerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-writeToLedger-${Environment}'
+      Runtime: python3.11
+      Handler: handlers.write_to_ledger
+      Code:
+        ZipFile: |
+          # Placeholder - deploy with actual code
+          def lambda_handler(event, context):
+              return {'statusCode': 200, 'body': 'Not implemented'}
+      Role: !GetAtt LambdaExecutionRole.Arn
+
+  VerifyArtworkFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-verifyArtwork-${Environment}'
+      Runtime: python3.11
+      Handler: handlers.verify_artwork
+      Code:
+        ZipFile: |
+          # Placeholder - deploy with actual code
+          def lambda_handler(event, context):
+              return {'statusCode': 200, 'body': 'Not implemented'}
+      Role: !GetAtt LambdaExecutionRole.Arn
+
+  # S3 Lambda Permission
+  S3InvokeLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ComputePhashFunction
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub '${IngestionBucket}'
+
+  # API Gateway
+  HatchmarkAPI:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${ProjectName}-api-${Environment}'
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+
+  GenerateUrlIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HatchmarkAPI
+      IntegrationType: AWS_PROXY
+      IntegrationMethod: POST
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GeneratePresignedUrlFunction.Arn}/invocations'
+
+  VerifyArtworkIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HatchmarkAPI
+      IntegrationType: AWS_PROXY
+      IntegrationMethod: POST
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${VerifyArtworkFunction.Arn}/invocations'
+
+  GenerateUrlRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HatchmarkAPI
+      RouteKey: 'POST /generate-upload-url'
+      Target: !Sub 'integrations/${GenerateUrlIntegration}'
+
+  VerifyArtworkRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HatchmarkAPI
+      RouteKey: 'POST /verify-artwork'
+      Target: !Sub 'integrations/${VerifyArtworkIntegration}'
+
+  APIStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HatchmarkAPI
+      StageName: '$default'
+      AutoDeploy: true
+
+  # Lambda API Gateway Permissions
+  GenerateUrlLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref GeneratePresignedUrlFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub '${HatchmarkAPI}/*/*'
+
+  VerifyArtworkLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref VerifyArtworkFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub '${HatchmarkAPI}/*/*'
+
+Outputs:
+  APIGatewayURL:
+    Description: 'API Gateway URL'
+    Value: !Sub 'https://${HatchmarkAPI}.execute-api.${AWS::Region}.amazonaws.com'
+    Export:
+      Name: !Sub '${ProjectName}-api-url-${Environment}'
+
+  IngestionBucketName:
+    Description: 'S3 Bucket for ingestion'
+    Value: !Ref IngestionBucket
+    Export:
+      Name: !Sub '${ProjectName}-ingestion-bucket-${Environment}'
+
+  ProcessedBucketName:
+    Description: 'S3 Bucket for processed images'
+    Value: !Ref ProcessedBucket
+    Export:
+      Name: !Sub '${ProjectName}-processed-bucket-${Environment}'
+
+  QLDBLedgerName:
+    Description: 'QLDB Ledger name'
+    Value: !Ref HatchmarkLedger
+    Export:
+      Name: !Sub '${ProjectName}-ledger-${Environment}'
+
+  SQSQueueURL:
+    Description: 'SQS Queue URL for watermarking'
+    Value: !Ref WatermarkingQueue
+    Export:
+      Name: !Sub '${ProjectName}-queue-url-${Environment}'

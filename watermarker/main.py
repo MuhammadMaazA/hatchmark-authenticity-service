@@ -1,54 +1,229 @@
 import os
+import json
+import boto3
+import io
 from PIL import Image
+from steganography.steganography import Steganography
+from botocore.exceptions import ClientError
 
-# In a real scenario, these paths would be passed in or determined dynamically.
-# For now, we'll create a placeholder image to work with.
-INPUT_IMAGE_PATH = "/app/input_image.png"
-OUTPUT_IMAGE_PATH = "/app/output_image_watermarked.png"
+# Initialize AWS clients
+s3_client = boto3.client('s3')
+sqs_client = boto3.client('sqs')
 
-def create_dummy_image():
-    """Creates a simple black square image for testing purposes."""
-    print("Creating a dummy input image for testing...")
+# Environment variables
+INPUT_BUCKET = os.environ.get('INPUT_BUCKET', 'hatchmark-ingestion-bucket')
+OUTPUT_BUCKET = os.environ.get('OUTPUT_BUCKET', 'hatchmark-processed-bucket')
+SQS_QUEUE_URL = os.environ.get('SQS_QUEUE_URL')
+
+def download_image_from_s3(bucket_name, object_key):
+    """Download image from S3 into memory."""
     try:
-        img = Image.new('RGB', (200, 200), color = 'black')
-        img.save(INPUT_IMAGE_PATH)
-        print(f"Dummy image saved to {INPUT_IMAGE_PATH}")
+        print(f"Downloading image from S3: s3://{bucket_name}/{object_key}")
+        response = s3_client.get_object(Bucket=bucket_name, Key=object_key)
+        image_data = response['Body'].read()
+        
+        # Load image using PIL
+        image = Image.open(io.BytesIO(image_data))
+        print(f"Image loaded: {image.format}, Size: {image.size}, Mode: {image.mode}")
+        return image
+    except ClientError as e:
+        print(f"Error downloading from S3: {e}")
+        raise
+    except Exception as e:
+        print(f"Error processing image: {e}")
+        raise
+
+def upload_image_to_s3(image, bucket_name, object_key):
+    """Upload processed image to S3."""
+    try:
+        # Convert PIL Image to bytes
+        img_byte_arr = io.BytesIO()
+        # Preserve original format or use PNG as fallback
+        image_format = image.format if image.format else 'PNG'
+        image.save(img_byte_arr, format=image_format)
+        img_byte_arr.seek(0)
+        
+        print(f"Uploading watermarked image to S3: s3://{bucket_name}/{object_key}")
+        s3_client.put_object(
+            Bucket=bucket_name,
+            Key=object_key,
+            Body=img_byte_arr.getvalue(),
+            ContentType=f'image/{image_format.lower()}'
+        )
+        print(f"Successfully uploaded to s3://{bucket_name}/{object_key}")
         return True
     except Exception as e:
-        print(f"Error creating dummy image: {e}")
-        return False
+        print(f"Error uploading to S3: {e}")
+        raise
 
-def process_image():
-    """
-    Main function to simulate the watermarking process.
-    In the future, this will contain the real steganography logic.
-    """
-    print("--- Watermarker Service Started ---")
-    
-    if not os.path.exists(INPUT_IMAGE_PATH):
-        if not create_dummy_image():
-            return
-
+def embed_watermark(image, watermark_data):
+    """Embed invisible watermark using steganography."""
     try:
-        print(f"Loading image from {INPUT_IMAGE_PATH}...")
-        with Image.open(INPUT_IMAGE_PATH) as img:
-            # --- REAL WATERMARKING LOGIC WILL GO HERE ---
-            # For now, we just print the image size and save a copy.
-            print(f"Image format: {img.format}, Size: {img.size}, Mode: {img.mode}")
-            print("Simulating invisible watermark embedding...")
-            # ---
-            
-            print(f"Saving processed image to {OUTPUT_IMAGE_PATH}...")
-            img.save(OUTPUT_IMAGE_PATH)
-            print("Image successfully processed.")
-
-    except FileNotFoundError:
-        print(f"ERROR: Input file not found at {INPUT_IMAGE_PATH}")
+        print(f"Embedding watermark data: {watermark_data}")
+        
+        # Convert PIL Image to temporary file for steganography library
+        temp_input = "/tmp/temp_input.png"
+        temp_output = "/tmp/temp_output.png"
+        
+        # Save image temporarily
+        image.save(temp_input, "PNG")
+        
+        # Embed the watermark
+        Steganography.encode(temp_input, temp_output, watermark_data)
+        
+        # Load the watermarked image
+        watermarked_image = Image.open(temp_output)
+        
+        # Clean up temporary files
+        os.remove(temp_input)
+        os.remove(temp_output)
+        
+        print("Watermark successfully embedded")
+        return watermarked_image
     except Exception as e:
-        print(f"An error occurred during image processing: {e}")
-    finally:
-        print("--- Watermarker Service Finished ---")
+        print(f"Error embedding watermark: {e}")
+        # If steganography fails, return the original image
+        print("Falling back to original image without watermark")
+        return image
 
+def extract_watermark(image):
+    """Extract watermark from image."""
+    try:
+        # Save image temporarily
+        temp_input = "/tmp/temp_extract.png"
+        image.save(temp_input, "PNG")
+        
+        # Extract the watermark
+        extracted_data = Steganography.decode(temp_input)
+        
+        # Clean up temporary file
+        os.remove(temp_input)
+        
+        print(f"Extracted watermark: {extracted_data}")
+        return extracted_data
+    except Exception as e:
+        print(f"Error extracting watermark: {e}")
+        return None
+
+def process_sqs_message():
+    """Process a single message from SQS queue."""
+    try:
+        if not SQS_QUEUE_URL:
+            print("No SQS queue URL configured, running in test mode")
+            return process_test_image()
+        
+        # Receive message from SQS
+        print(f"Polling SQS queue: {SQS_QUEUE_URL}")
+        response = sqs_client.receive_message(
+            QueueUrl=SQS_QUEUE_URL,
+            MaxNumberOfMessages=1,
+            WaitTimeSeconds=20  # Long polling
+        )
+        
+        messages = response.get('Messages', [])
+        if not messages:
+            print("No messages in queue")
+            return
+        
+        message = messages[0]
+        receipt_handle = message['ReceiptHandle']
+        
+        try:
+            # Parse message body
+            message_body = json.loads(message['Body'])
+            s3_key = message_body.get('s3Key')
+            transaction_id = message_body.get('transactionId')
+            bucket_name = message_body.get('bucketName', INPUT_BUCKET)
+            
+            if not s3_key or not transaction_id:
+                print(f"Invalid message format: {message_body}")
+                return
+            
+            print(f"Processing watermarking request for {s3_key} with transaction ID: {transaction_id}")
+            
+            # Download image from S3
+            image = download_image_from_s3(bucket_name, s3_key)
+            
+            # Embed watermark with transaction ID
+            watermarked_image = embed_watermark(image, transaction_id)
+            
+            # Generate output key
+            output_key = f"processed/{transaction_id}.png"
+            
+            # Upload watermarked image
+            upload_image_to_s3(watermarked_image, OUTPUT_BUCKET, output_key)
+            
+            # Delete message from queue on success
+            sqs_client.delete_message(
+                QueueUrl=SQS_QUEUE_URL,
+                ReceiptHandle=receipt_handle
+            )
+            
+            print(f"Successfully processed watermarking for transaction {transaction_id}")
+            
+        except Exception as e:
+            print(f"Error processing message: {e}")
+            # Message will remain in queue for retry
+            raise
+            
+    except Exception as e:
+        print(f"Error in SQS processing: {e}")
+        raise
+
+def process_test_image():
+    """Create and process a test image for development/testing."""
+    print("Running in test mode - creating dummy image")
+    
+    # Create a test image
+    test_image = Image.new('RGB', (400, 400), color='blue')
+    
+    # Add some visual content
+    from PIL import ImageDraw, ImageFont
+    draw = ImageDraw.Draw(test_image)
+    try:
+        # Try to use a default font
+        font = ImageFont.load_default()
+    except:
+        font = None
+    
+    draw.text((50, 180), "HATCHMARK TEST IMAGE", fill='white', font=font)
+    
+    # Embed test watermark
+    test_transaction_id = "test-transaction-12345"
+    watermarked_image = embed_watermark(test_image, test_transaction_id)
+    
+    # Save to local file for testing
+    output_path = "/app/test_watermarked.png"
+    watermarked_image.save(output_path)
+    print(f"Test watermarked image saved to {output_path}")
+    
+    # Test extraction
+    extracted = extract_watermark(watermarked_image)
+    print(f"Watermark extraction test result: {extracted}")
+    
+    return True
+
+def main():
+    """Main entry point for the watermarker service."""
+    print("--- Hatchmark Watermarker Service Started ---")
+    
+    try:
+        # Check if running in Fargate (with SQS) or test mode
+        if SQS_QUEUE_URL:
+            print("Running in production mode with SQS")
+            while True:
+                process_sqs_message()
+        else:
+            print("Running in test mode")
+            process_test_image()
+            
+    except KeyboardInterrupt:
+        print("Service interrupted by user")
+    except Exception as e:
+        print(f"Fatal error in watermarker service: {e}")
+        raise
+    finally:
+        print("--- Hatchmark Watermarker Service Finished ---")
 
 if __name__ == "__main__":
-    process_image()
+    main()
