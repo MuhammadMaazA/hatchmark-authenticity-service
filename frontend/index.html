@@ -1,138 +1,26 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hatchmark - Digital Authenticity Service</title>
-    <link rel="stylesheet" href="styles.css">
-</head>
-<body>
-    <div class="container">
-        <header class="header">
-            <h1>🔒 Hatchmark</h1>
-            <p class="subtitle">Digital Authenticity & Proof of Creation</p>
-        </header>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hatchmark – Digital Authenticity & Verification</title>
+    <meta name="description" content="Hatchmark proves the origin of digital works with verifiable fingerprints and authenticity checks." />
+    <meta name="author" content="Hatchmark" />
 
-        <nav class="nav-tabs">
-            <button class="tab-button active" onclick="showTab('register')">Register Artwork</button>
-            <button class="tab-button" onclick="showTab('verify')">Verify Artwork</button>
-        </nav>
+    <link rel="canonical" href="/" />
 
-        <!-- Register Tab -->
-        <div id="register" class="tab-content active">
-            <div class="card">
-                <h2>Register Your Digital Artwork</h2>
-                <p>Upload your original artwork to create an immutable record on our quantum ledger.</p>
-                
-                <div class="upload-area" id="registerUploadArea">
-                    <div class="upload-placeholder">
-                        <div class="upload-icon">📁</div>
-                        <p>Drag & drop your image here or click to browse</p>
-                        <p class="file-types">Supported: JPG, PNG, GIF (max 10MB)</p>
-                    </div>
-                    <input type="file" id="registerFileInput" accept="image/*" style="display: none;">
-                </div>
+    <meta property="og:title" content="Hatchmark – Digital Authenticity & Verification" />
+    <meta property="og:description" content="Register your work, embed invisible proof, and verify authenticity in seconds." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
 
-                <div class="upload-progress" id="registerProgress" style="display: none;">
-                    <div class="progress-bar">
-                        <div class="progress-fill" id="registerProgressFill"></div>
-                    </div>
-                    <p id="registerProgressText">Uploading...</p>
-                </div>
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@lovable_dev" />
+    <meta name="twitter:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
+  </head>
 
-                <div class="result-area" id="registerResult" style="display: none;">
-                    <div class="result-content">
-                        <div class="success-icon">✅</div>
-                        <h3>Artwork Successfully Registered!</h3>
-                        <div class="result-details">
-                            <p><strong>Transaction ID:</strong> <span id="transactionId"></span></p>
-                            <p><strong>Timestamp:</strong> <span id="timestamp"></span></p>
-                            <p><strong>Status:</strong> <span class="status-badge">Registered</span></p>
-                        </div>
-                        <button class="btn-secondary" onclick="resetRegisterForm()">Register Another</button>
-                    </div>
-                </div>
-
-                <div class="error-area" id="registerError" style="display: none;">
-                    <div class="error-content">
-                        <div class="error-icon">❌</div>
-                        <h3>Registration Failed</h3>
-                        <p id="registerErrorMessage"></p>
-                        <button class="btn-secondary" onclick="resetRegisterForm()">Try Again</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Verify Tab -->
-        <div id="verify" class="tab-content">
-            <div class="card">
-                <h2>Verify Artwork Authenticity</h2>
-                <p>Check if an image has been registered and verify its authenticity.</p>
-                
-                <div class="upload-area" id="verifyUploadArea">
-                    <div class="upload-placeholder">
-                        <div class="upload-icon">🔍</div>
-                        <p>Drag & drop the image to verify or click to browse</p>
-                        <p class="file-types">Supported: JPG, PNG, GIF (max 10MB)</p>
-                    </div>
-                    <input type="file" id="verifyFileInput" accept="image/*" style="display: none;">
-                </div>
-
-                <div class="upload-progress" id="verifyProgress" style="display: none;">
-                    <div class="progress-bar">
-                        <div class="progress-fill" id="verifyProgressFill"></div>
-                    </div>
-                    <p id="verifyProgressText">Verifying...</p>
-                </div>
-
-                <div class="result-area" id="verifyResult" style="display: none;">
-                    <div class="verification-result">
-                        <div class="verdict-section">
-                            <div class="verdict-icon" id="verdictIcon"></div>
-                            <h3 id="verdictTitle"></h3>
-                            <p class="verdict-description" id="verdictDescription"></p>
-                        </div>
-                        
-                        <div class="verification-details" id="verificationDetails" style="display: none;">
-                            <h4>Registration Details</h4>
-                            <div class="details-grid">
-                                <div class="detail-item">
-                                    <label>Original Registration:</label>
-                                    <span id="originalTimestamp"></span>
-                                </div>
-                                <div class="detail-item">
-                                    <label>Transaction ID:</label>
-                                    <span id="originalTransactionId"></span>
-                                </div>
-                                <div class="detail-item">
-                                    <label>Creator:</label>
-                                    <span id="creatorId"></span>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <button class="btn-secondary" onclick="resetVerifyForm()">Verify Another</button>
-                    </div>
-                </div>
-
-                <div class="error-area" id="verifyError" style="display: none;">
-                    <div class="error-content">
-                        <div class="error-icon">❌</div>
-                        <h3>Verification Failed</h3>
-                        <p id="verifyErrorMessage"></p>
-                        <button class="btn-secondary" onclick="resetVerifyForm()">Try Again</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <footer class="footer">
-            <p>&copy; 2025 Hatchmark. Powered by AWS Quantum Ledger Database.</p>
-            <p class="tech-info">Serverless • Immutable • Verifiable</p>
-        </footer>
-    </div>
-
-    <script src="script.js"></script>
-</body>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>
