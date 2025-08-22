@@ -47,9 +47,10 @@ hatchmark-authenticity-service/
 │   ├── Dockerfile              # Container definition
 │   └── requirements.txt        # Python dependencies
 ├── frontend/
-│   ├── index.html              # Main web interface
-│   ├── styles.css              # UI styling
-│   └── script.js               # Frontend logic
+│   ├── index.html              # Main web interface (Vite + React + Tailwind)
+│   ├── src/                    # React source code
+│   ├── public/                 # Static assets
+│   └── ...                     # Modern frontend stack
 ├── deployment/
 │   ├── cloudformation-template.yaml  # Infrastructure as Code
 │   ├── deploy.sh                     # Deployment script
@@ -88,10 +89,16 @@ hatchmark-authenticity-service/
 
 4. **Update frontend configuration**
    - Get API Gateway URL from deployment outputs
-   - Update `CONFIG.API_BASE_URL` in `frontend/script.js`
+   - Update the API base URL in the appropriate config or environment file in `frontend` (see `.env` or Vite config if present)
 
 5. **Test the service**
-   - Open `frontend/index.html` in a web browser
+   - Run the frontend locally:
+     ```bash
+   cd frontend
+     npm install
+     npm run dev
+     ```
+   - Open the local development URL in your browser (see terminal output)
    - Try registering and verifying an image
 
 ## 📋 Development Phases
