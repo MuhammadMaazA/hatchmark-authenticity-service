@@ -1,12 +1,12 @@
-# 🔒 Hatchmark - Digital Authenticity Service
+# Hatchmark - Digital Authenticity Service
 
 A comprehensive, cloud-native service for proving digital content authenticity using quantum ledger technology and invisible watermarking.
 
-## 🌟 Project Vision
+## Project Vision
 
 Hatchmark addresses the escalating challenge of digital content authenticity in the age of generative AI. Our mission is to provide creators with an accessible, robust tool to prove the origin and timestamp of their digital works through immutable "hatch marks" recorded on a quantum ledger database.
 
-## 🏗️ Architecture Overview
+## Architecture Overview
 
 - **Serverless-First**: Built on AWS Lambda, API Gateway, and Step Functions
 - **Immutable Ledger**: Amazon QLDB for tamper-proof record keeping
@@ -14,7 +14,7 @@ Hatchmark addresses the escalating challenge of digital content authenticity in 
 - **Scalable Processing**: AWS Fargate for heavy watermarking tasks
 - **Cost-Efficient**: Pay-per-use model with scale-to-zero capabilities
 
-## 🔧 Technology Stack
+## Technology Stack
 
 ### Backend
 - **AWS Lambda**: Serverless compute for API endpoints
@@ -34,7 +34,7 @@ Hatchmark addresses the escalating challenge of digital content authenticity in 
 - **Steganography**: Invisible watermark embedding
 - **ImageHash**: Perceptual hash computation
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 hatchmark-authenticity-service/
@@ -59,7 +59,7 @@ hatchmark-authenticity-service/
     └── (architecture diagrams)
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -101,7 +101,7 @@ hatchmark-authenticity-service/
    - Open the local development URL in your browser (see terminal output)
    - Try registering and verifying an image
 
-## 📋 Development Phases
+## Development Phases
 
 ### ✅ Phase 0: Foundation & Setup
 - [x] Project structure
@@ -142,7 +142,7 @@ hatchmark-authenticity-service/
 - [ ] Cost optimization
 - [ ] Comprehensive documentation
 
-## 🔐 Security Features
+## Security Features
 
 - **Presigned URLs**: Secure, temporary file upload permissions
 - **IAM Roles**: Principle of least privilege access
@@ -150,14 +150,14 @@ hatchmark-authenticity-service/
 - **Encrypted Storage**: Server-side encryption for all objects
 - **HTTPS Only**: All API communications encrypted in transit
 
-## 💰 Cost Management
+## Cost Management
 
 - **Serverless Architecture**: Pay only for actual usage
 - **Scale-to-Zero**: Fargate tasks scale down when idle
 - **AWS Budgets**: Automated cost alerts and monitoring
 - **Optimized Storage**: S3 lifecycle policies for cost control
 
-## 🔍 How It Works
+## How It Works
 
 ### Registration Flow
 1. User uploads image through web interface
@@ -179,7 +179,7 @@ hatchmark-authenticity-service/
    - **Potentially Altered**: Hash matches but no watermark
    - **Not Registered**: No matching records found
 
-## 🧪 Testing
+## Testing
 
 ### Local Testing
 ```bash
@@ -204,14 +204,14 @@ curl -X POST https://your-api-url/verify-artwork \
   -F "file=@test-image.png"
 ```
 
-## 📊 Monitoring & Observability
+## Monitoring & Observability
 
 - **CloudWatch Logs**: Centralized logging for all services
 - **CloudWatch Metrics**: Performance and cost monitoring
 - **Step Functions Console**: Visual workflow execution tracking
 - **QLDB Console**: Transaction history and ledger verification
 
-## 🤝 Contributing
+## Contributing
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
@@ -219,17 +219,17 @@ curl -X POST https://your-api-url/verify-artwork \
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🆘 Support
+## Support
 
 - **Documentation**: Check the `docs/` directory for detailed guides
 - **Issues**: Report bugs and request features via GitHub Issues
 - **Discussions**: Join community discussions in GitHub Discussions
 
-## 🎯 Roadmap
+## Roadmap
 
 ### Next Features
 - [ ] Multi-format support (video, audio, documents)
