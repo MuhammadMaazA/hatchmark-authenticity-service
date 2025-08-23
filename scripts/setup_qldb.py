@@ -10,7 +10,7 @@ import time
 from botocore.exceptions import ClientError
 
 # QLDB Configuration
-LEDGER_NAME = "hatchmark-ledger-dev"
+LEDGER_NAME = "hatchmark-ledger"
 TABLE_NAME = "registrations"
 
 def create_qldb_session():
@@ -203,7 +203,7 @@ def show_ledger_info():
         qldb_client = boto3.client('qldb')
         response = qldb_client.describe_ledger(Name=LEDGER_NAME)
         
-        print(f"\n📊 Ledger Information:")
+        print(f"\nLedger Information:")
         print(f"Name: {response['Name']}")
         print(f"State: {response['State']}")
         print(f"Creation Date: {response['CreationDateTime']}")
@@ -220,7 +220,7 @@ def show_ledger_info():
 
 def main():
     """Main setup function."""
-    print("🔒 Hatchmark QLDB Setup")
+    print("Hatchmark QLDB Setup")
     print("=" * 40)
     
     # Check if ledger exists
@@ -234,7 +234,7 @@ def main():
     show_ledger_info()
     
     # Setup tables and indexes
-    print(f"\n📋 Setting up tables and indexes...")
+    print(f"\nSetting up tables and indexes...")
     if setup_tables_and_indexes():
         print("✅ Tables and indexes created successfully")
     else:
@@ -242,21 +242,21 @@ def main():
         return
     
     # Insert sample data
-    print(f"\n🧪 Inserting sample data...")
+    print(f"\nInserting sample data...")
     if insert_sample_data():
         print("✅ Sample data inserted")
     else:
-        print("⚠️ Failed to insert sample data")
+        print("Warning: Failed to insert sample data")
     
     # Verify setup
-    print(f"\n🔍 Verifying setup...")
+    print(f"\nVerifying setup...")
     if verify_setup():
         print("✅ Setup verification successful")
     else:
         print("❌ Setup verification failed")
     
     print("\n" + "=" * 40)
-    print("🎯 QLDB setup completed!")
+    print("QLDB setup completed!")
     print("\nNext steps:")
     print("1. Update Lambda functions with QLDB access")
     print("2. Test the Step Functions workflow")
