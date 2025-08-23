@@ -10,10 +10,17 @@ from botocore.exceptions import ClientError
 s3_client = boto3.client('s3')
 sqs_client = boto3.client('sqs')
 
-# Environment variables
-INPUT_BUCKET = os.environ.get('INPUT_BUCKET', 'hatchmark-ingestion-bucket')
-OUTPUT_BUCKET = os.environ.get('OUTPUT_BUCKET', 'hatchmark-processed-bucket')
+# Environment variables with fallback defaults
+INGESTION_BUCKET = os.environ.get('INGESTION_BUCKET', 'hatchmark-ingestion-bucket-20250823004849')
+PROCESSED_BUCKET = os.environ.get('PROCESSED_BUCKET', 'hatchmark-processed-bucket-20250823004849')
 SQS_QUEUE_URL = os.environ.get('SQS_QUEUE_URL')
+
+# Log configuration
+print(f"Watermarker starting with config:")
+print(f"  INGESTION_BUCKET: {INGESTION_BUCKET}")
+print(f"  PROCESSED_BUCKET: {PROCESSED_BUCKET}")
+print(f"  SQS_QUEUE_URL: {SQS_QUEUE_URL}")
+print(f"  Running mode: {'Production' if SQS_QUEUE_URL else 'Test'}")
 
 def download_image_from_s3(bucket_name, object_key):
     """Download image from S3 into memory."""
@@ -131,27 +138,30 @@ def process_sqs_message():
         try:
             # Parse message body
             message_body = json.loads(message['Body'])
-            s3_key = message_body.get('s3Key')
-            transaction_id = message_body.get('transactionId')
-            bucket_name = message_body.get('bucketName', INPUT_BUCKET)
+            # Parse message body for object key and QLDB document ID
+            object_key = message_body.get('objectKey')
+            qldb_document_id = message_body.get('qldbDocumentId')
+            bucket_name = message_body.get('bucketName', INGESTION_BUCKET)
             
-            if not s3_key or not transaction_id:
+            if not object_key or not qldb_document_id:
                 print(f"Invalid message format: {message_body}")
                 return
             
-            print(f"Processing watermarking request for {s3_key} with transaction ID: {transaction_id}")
+            print(f"Processing watermarking request for {object_key} with QLDB document ID: {qldb_document_id}")
             
-            # Download image from S3
-            image = download_image_from_s3(bucket_name, s3_key)
+            # Download the original image file from the ingestion S3 bucket
+            image = download_image_from_s3(bucket_name, object_key)
             
-            # Embed watermark with transaction ID
-            watermarked_image = embed_watermark(image, transaction_id)
+            # Use steganography library to embed the qldbDocumentId as invisible watermark
+            watermarked_image = embed_watermark(image, qldb_document_id)
             
-            # Generate output key
-            output_key = f"processed/{transaction_id}.png"
+            # Generate output key for the processed bucket
+            # Extract original filename from the object key
+            original_filename = object_key.split('/')[-1]
+            output_key = f"watermarked/{original_filename}"
             
-            # Upload watermarked image
-            upload_image_to_s3(watermarked_image, OUTPUT_BUCKET, output_key)
+            # Upload the watermarked image to the processed S3 bucket
+            upload_image_to_s3(watermarked_image, PROCESSED_BUCKET, output_key)
             
             # Delete message from queue on success
             sqs_client.delete_message(
@@ -159,7 +169,7 @@ def process_sqs_message():
                 ReceiptHandle=receipt_handle
             )
             
-            print(f"Successfully processed watermarking for transaction {transaction_id}")
+            print(f"Successfully processed watermarking for QLDB document {qldb_document_id}")
             
         except Exception as e:
             print(f"Error processing message: {e}")

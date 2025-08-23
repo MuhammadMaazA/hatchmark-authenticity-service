@@ -1,0 +1,618 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Hatchmark Digital Authenticity Service
+  
+  Cloud-native service for digital content authenticity verification
+  using quantum ledger technology and invisible watermarking.
+
+# Global configuration for all Lambda functions
+Globals:
+  Function:
+    Runtime: python3.11
+    Architecture: arm64
+    Timeout: 30
+    MemorySize: 256
+    Environment:
+      Variables:
+        LOG_LEVEL: INFO
+
+Parameters:
+  IngestionBucketName:
+    Type: String
+    Default: hatchmark-ingestion-bucket-20250823004849
+    Description: Name of the S3 bucket for ingesting original files
+  
+  ProcessedBucketName:
+    Type: String
+    Default: hatchmark-processed-bucket-20250823004849
+    Description: Name of the S3 bucket for processed/watermarked files
+
+Resources:
+  # ========================================================================
+  # IAM ROLES
+  # ========================================================================
+  
+  HatchmarkGenerateUrlRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: HatchmarkGenerateUrlRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3PresignedUrlPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource: !Sub '${HatchmarkIngestionBucket}/uploads/*'
+  
+  HatchmarkHashRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: HatchmarkHashRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3ReadPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub '${HatchmarkIngestionBucket}/*'
+        - PolicyName: StepFunctionsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource: !Sub '${HatchmarkStepFunction}'
+  
+  HatchmarkLedgerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: HatchmarkLedgerRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: QLDBPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - qldb:SendCommand
+                Resource: !Sub '${HatchmarkQLDBLedger}/*'
+        - PolicyName: SQSPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt HatchmarkWatermarkingQueue.Arn
+  
+  HatchmarkVerificationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: HatchmarkVerificationRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: QLDBPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - qldb:SendCommand
+                Resource: !Sub '${HatchmarkQLDBLedger}/*'
+        - PolicyName: S3ReadPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub '${HatchmarkProcessedBucket}/*'
+
+  # ========================================================================
+# LAMBDA FUNCTIONS
+# ========================================================================
+  
+  HatchmarkGenerateUrlFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: hatchmark-generate-url
+      CodeUri: src/handlers/
+      Handler: generate_presigned_url.lambda_handler
+      Description: Generate presigned URLs for secure S3 uploads
+      Role: !GetAtt HatchmarkGenerateUrlRole.Arn
+      Environment:
+        Variables:
+          INGESTION_BUCKET: !Ref IngestionBucketName
+      Events:
+        UploadInitiate:
+          Type: HttpApi
+          Properties:
+            Path: /uploads/initiate
+            Method: POST
+            CorsConfiguration:
+              AllowOrigins:
+                - "*"
+              AllowHeaders:
+                - Content-Type
+              AllowMethods:
+                - POST
+                - OPTIONS
+  
+  HatchmarkHashFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: hatchmark-hash-function
+      CodeUri: src/handlers/
+      Handler: hashing_handler.lambda_handler
+      Description: Compute perceptual hash of uploaded images
+      Timeout: 60
+      MemorySize: 512
+      Role: !GetAtt HatchmarkHashRole.Arn
+      Environment:
+        Variables:
+          LOG_LEVEL: INFO
+          STEP_FUNCTION_ARN: !Ref HatchmarkStepFunction
+      Events:
+        S3Upload:
+          Type: S3
+          Properties:
+            Bucket: !Ref HatchmarkIngestionBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: uploads/
+  
+  HatchmarkLedgerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: hatchmark-ledger-function
+      CodeUri: src/handlers/
+      Handler: ledger_handler.lambda_handler
+      Description: Write registration data to QLDB ledger
+      Timeout: 30
+      MemorySize: 256
+      Role: !GetAtt HatchmarkLedgerRole.Arn
+      Environment:
+        Variables:
+          QLDB_LEDGER_NAME: !Ref HatchmarkQLDBLedger
+          LOG_LEVEL: INFO
+  
+  HatchmarkVerificationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: hatchmark-verification-function
+      CodeUri: src/handlers/
+      Handler: verification_handler.lambda_handler
+      Description: Verify artwork authenticity
+      Timeout: 60
+      MemorySize: 512
+      Role: !GetAtt HatchmarkVerificationRole.Arn
+      Environment:
+        Variables:
+          QLDB_LEDGER_NAME: !Ref HatchmarkQLDBLedger
+          PROCESSED_BUCKET: !Ref ProcessedBucketName
+          LOG_LEVEL: INFO
+      Events:
+        VerifyArtwork:
+          Type: HttpApi
+          Properties:
+            Path: /verify
+            Method: POST
+            CorsConfiguration:
+              AllowOrigins:
+                - "*"
+              AllowHeaders:
+                - Content-Type
+              AllowMethods:
+                - POST
+                - OPTIONS
+
+  # ========================================================================
+  # S3 BUCKETS
+  # ========================================================================
+  
+  HatchmarkIngestionBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref IngestionBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt HatchmarkHashFunction.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: uploads/
+  
+  HatchmarkProcessedBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref ProcessedBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+  
+  # ========================================================================
+  # QLDB LEDGER
+  # ========================================================================
+  
+  HatchmarkQLDBLedger:
+    Type: AWS::QLDB::Ledger
+    Properties:
+      Name: hatchmark-ledger
+      PermissionsMode: STANDARD
+      DeletionProtection: true
+  
+  # ========================================================================
+  # SQS QUEUE
+  # ========================================================================
+  
+  HatchmarkWatermarkingQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: hatchmark-watermarking-queue
+      VisibilityTimeoutSeconds: 900  # 15 minutes
+      MessageRetentionPeriod: 1209600  # 14 days
+      ReceiveMessageWaitTimeSeconds: 20  # Long polling
+  
+  # ========================================================================
+  # STEP FUNCTIONS
+  # ========================================================================
+  
+  HatchmarkStepFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: HatchmarkStepFunctionRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StepFunctionExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt HatchmarkHashFunction.Arn
+                  - !GetAtt HatchmarkLedgerFunction.Arn
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt HatchmarkWatermarkingQueue.Arn
+  
+  HatchmarkStepFunction:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: hatchmark-notarization-workflow
+      RoleArn: !GetAtt HatchmarkStepFunctionRole.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "Hatchmark Notarization Pipeline",
+          "StartAt": "ComputePerceptualHash",
+          "States": {
+            "ComputePerceptualHash": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${HatchmarkHashFunction}",
+                "Payload.$": "$"
+              },
+              "ResultPath": "$.hashResult",
+              "Next": "WriteToLedger",
+              "Retry": [
+                {
+                  "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2.0
+                }
+              ]
+            },
+            "WriteToLedger": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${HatchmarkLedgerFunction}",
+                "Payload": {
+                  "bucketName.$": "$.hashResult.Payload.bucketName",
+                  "objectKey.$": "$.hashResult.Payload.objectKey",
+                  "perceptualHash.$": "$.hashResult.Payload.perceptualHash",
+                  "timestamp.$": "$.hashResult.Payload.timestamp",
+                  "imageWidth.$": "$.hashResult.Payload.imageWidth",
+                  "imageHeight.$": "$.hashResult.Payload.imageHeight",
+                  "imageFormat.$": "$.hashResult.Payload.imageFormat",
+                  "algorithm.$": "$.hashResult.Payload.algorithm"
+                }
+              },
+              "ResultPath": "$.ledgerResult",
+              "Next": "SendToWatermarkingQueue",
+              "Retry": [
+                {
+                  "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2.0
+                }
+              ]
+            },
+            "SendToWatermarkingQueue": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::sqs:sendMessage",
+              "Parameters": {
+                "QueueUrl": "${HatchmarkWatermarkingQueue}",
+                "MessageBody": {
+                  "objectKey.$": "$.hashResult.Payload.objectKey",
+                  "qldbDocumentId.$": "$.ledgerResult.Payload.documentId",
+                  "bucketName.$": "$.hashResult.Payload.bucketName"
+                }
+              },
+              "Next": "NotarizedSuccess"
+            },
+            "NotarizedSuccess": {
+              "Type": "Succeed",
+              "Result": {
+                "status": "SUCCESS",
+                "message": "Image successfully notarized and queued for watermarking"
+              }
+            }
+          }
+        }
+  
+  # ========================================================================
+  # ECS/FARGATE RESOURCES
+  # ========================================================================
+  
+  HatchmarkECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: hatchmark-cluster
+  
+  HatchmarkTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: HatchmarkTaskRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SQSPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt HatchmarkWatermarkingQueue.Arn
+        - PolicyName: S3Policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub '${HatchmarkIngestionBucket}/*'
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource: !Sub '${HatchmarkProcessedBucket}/*'
+  
+  HatchmarkExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: HatchmarkExecutionRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+  
+  HatchmarkTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: hatchmark-watermarker
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: 1024
+      Memory: 2048
+      ExecutionRoleArn: !GetAtt HatchmarkExecutionRole.Arn
+      TaskRoleArn: !GetAtt HatchmarkTaskRole.Arn
+      ContainerDefinitions:
+        - Name: watermarker
+          # Note: You'll need to build and push the image to ECR first
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/hatchmark-watermarker:latest'
+          Essential: true
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref HatchmarkLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: watermarker
+          Environment:
+            - Name: SQS_QUEUE_URL
+              Value: !Ref HatchmarkWatermarkingQueue
+            - Name: INGESTION_BUCKET
+              Value: !Ref IngestionBucketName
+            - Name: PROCESSED_BUCKET
+              Value: !Ref ProcessedBucketName
+  
+  HatchmarkLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/hatchmark-watermarker
+      RetentionInDays: 14
+  
+  # ========================================================================
+  # API GATEWAY
+  # ========================================================================
+  
+  HatchmarkHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Description: Hatchmark Digital Authenticity Service API
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowHeaders:
+          - Content-Type
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        MaxAge: 600
+
+# ========================================================================
+# OUTPUTS
+# ========================================================================
+
+Outputs:
+  HatchmarkApiGatewayUrl:
+    Description: "API Gateway endpoint URL"
+    Value: !Sub "https://${HatchmarkHttpApi}.execute-api.${AWS::Region}.amazonaws.com/"
+    Export:
+      Name: HatchmarkApiGatewayUrl
+  
+  HatchmarkGenerateUrlFunction:
+    Description: "Generate Presigned URL Lambda Function ARN"
+    Value: !GetAtt HatchmarkGenerateUrlFunction.Arn
+    Export:
+      Name: HatchmarkGenerateUrlFunctionArn
+  
+  HatchmarkHashFunction:
+    Description: "Hash Function Lambda ARN"
+    Value: !GetAtt HatchmarkHashFunction.Arn
+    Export:
+      Name: HatchmarkHashFunctionArn
+  
+  HatchmarkLedgerFunction:
+    Description: "Ledger Function Lambda ARN"
+    Value: !GetAtt HatchmarkLedgerFunction.Arn
+    Export:
+      Name: HatchmarkLedgerFunctionArn
+  
+  HatchmarkVerificationFunction:
+    Description: "Verification Function Lambda ARN"
+    Value: !GetAtt HatchmarkVerificationFunction.Arn
+    Export:
+      Name: HatchmarkVerificationFunctionArn
+  
+  IngestionBucket:
+    Description: "S3 Bucket for file ingestion"
+    Value: !Ref HatchmarkIngestionBucket
+    Export:
+      Name: HatchmarkIngestionBucket
+  
+  ProcessedBucket:
+    Description: "S3 Bucket for processed files"
+    Value: !Ref HatchmarkProcessedBucket
+    Export:
+      Name: HatchmarkProcessedBucket
+  
+  QLDBLedger:
+    Description: "QLDB Ledger Name"
+    Value: !Ref HatchmarkQLDBLedger
+    Export:
+      Name: HatchmarkQLDBLedger
+  
+  SQSQueue:
+    Description: "SQS Queue URL for watermarking"
+    Value: !Ref HatchmarkWatermarkingQueue
+    Export:
+      Name: HatchmarkWatermarkingQueue
+  
+  StepFunction:
+    Description: "Step Functions State Machine ARN"
+    Value: !Ref HatchmarkStepFunction
+    Export:
+      Name: HatchmarkStepFunction
+  
+  ECSCluster:
+    Description: "ECS Cluster for watermarking"
+    Value: !Ref HatchmarkECSCluster
+    Export:
+      Name: HatchmarkECSCluster
+  
+  TaskDefinition:
+    Description: "ECS Task Definition for watermarker"
+    Value: !Ref HatchmarkTaskDefinition
+    Export:
+      Name: HatchmarkTaskDefinition
