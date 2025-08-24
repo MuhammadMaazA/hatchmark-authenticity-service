@@ -1,0 +1,170 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Hatchmark Digital Authenticity Service - Phase 2 Implementation
+  
+  Core API for generating presigned URLs and verification
+
+# Global configuration for all Lambda functions
+Globals:
+  Function:
+    Runtime: python3.11
+    Architectures: [arm64]
+    Timeout: 30
+    MemorySize: 256
+    Environment:
+      Variables:
+        LOG_LEVEL: INFO
+
+Parameters:
+  IngestionBucketName:
+    Type: String
+    Default: hatchmark-ingestion-bucket-36933227
+    Description: Name of the S3 bucket for ingesting original files
+  
+  ProcessedBucketName:
+    Type: String
+    Default: hatchmark-processed-bucket-36933227
+    Description: Name of the S3 bucket for processed/watermarked files
+
+Resources:
+  # ========================================================================
+  # API GATEWAY
+  # ========================================================================
+  
+  HatchmarkHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Description: Hatchmark Digital Authenticity Service API
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowHeaders:
+          - Content-Type
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        MaxAge: 600
+
+  # ========================================================================
+  # IAM ROLES
+  # ========================================================================
+  
+  HatchmarkGenerateUrlRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: HatchmarkGenerateUrlRole2
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3PresignedUrlPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource: !Sub 'arn:aws:s3:::${IngestionBucketName}/uploads/*'
+
+  HatchmarkVerificationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: HatchmarkVerificationRole2
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: 
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/hatchmark-assets'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/hatchmark-assets/index/*'
+
+  # ========================================================================
+  # LAMBDA FUNCTIONS
+  # ========================================================================
+  
+  HatchmarkGenerateUrlFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: hatchmark-generate-url-function-v2
+      CodeUri: src/handlers/
+      Handler: generate_presigned_url.lambda_handler
+      Description: Generate presigned URLs for secure S3 uploads
+      Role: !GetAtt HatchmarkGenerateUrlRole.Arn
+      Environment:
+        Variables:
+          INGESTION_BUCKET: !Ref IngestionBucketName
+      Events:
+        UploadInitiate:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HatchmarkHttpApi
+            Path: /uploads/initiate
+            Method: POST
+
+  HatchmarkVerificationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: hatchmark-verification-function-v2
+      CodeUri: src/handlers/
+      Handler: verification_handler.lambda_handler
+      Description: Verify artwork authenticity
+      Timeout: 60
+      MemorySize: 512
+      Role: !GetAtt HatchmarkVerificationRole.Arn
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: hatchmark-assets
+          PROCESSED_BUCKET: !Ref ProcessedBucketName
+      Events:
+        VerifyArtwork:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HatchmarkHttpApi
+            Path: /verify
+            Method: POST
+
+# ========================================================================
+# OUTPUTS
+# ========================================================================
+
+Outputs:
+  HatchmarkApiGatewayUrl:
+    Description: "API Gateway endpoint URL"
+    Value: !Sub "https://${HatchmarkHttpApi}.execute-api.${AWS::Region}.amazonaws.com/"
+    Export:
+      Name: HatchmarkApiGatewayUrl
+  
+  HatchmarkGenerateUrlFunction:
+    Description: "Generate Presigned URL Lambda Function ARN"
+    Value: !GetAtt HatchmarkGenerateUrlFunction.Arn
+    Export:
+      Name: HatchmarkGenerateUrlFunctionArn
+  
+  HatchmarkVerificationFunction:
+    Description: "Verification Function Lambda ARN"
+    Value: !GetAtt HatchmarkVerificationFunction.Arn
+    Export:
+      Name: HatchmarkVerificationFunctionArn
