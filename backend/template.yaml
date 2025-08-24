@@ -10,7 +10,7 @@ Description: >
 Globals:
   Function:
     Runtime: python3.11
-    Architecture: arm64
+    Architectures: [arm64]
     Timeout: 30
     MemorySize: 256
     Environment:
@@ -20,12 +20,12 @@ Globals:
 Parameters:
   IngestionBucketName:
     Type: String
-    Default: hatchmark-ingestion-bucket-20250823004849
+    Default: hatchmark-ingestion-bucket-36933227
     Description: Name of the S3 bucket for ingesting original files
   
   ProcessedBucketName:
     Type: String
-    Default: hatchmark-processed-bucket-20250823004849
+    Default: hatchmark-processed-bucket-36933227
     Description: Name of the S3 bucket for processed/watermarked files
 
 Resources:
@@ -101,14 +101,19 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
-        - PolicyName: QLDBPolicy
+        - PolicyName: DynamoDBPolicy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:
-                  - qldb:SendCommand
-                Resource: !Sub '${HatchmarkQLDBLedger}/*'
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: 
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/hatchmark-assets'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/hatchmark-assets/index/*'
         - PolicyName: SQSPolicy
           PolicyDocument:
             Version: '2012-10-17'
@@ -132,14 +137,18 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
-        - PolicyName: QLDBPolicy
+        - PolicyName: DynamoDBPolicy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:
-                  - qldb:SendCommand
-                Resource: !Sub '${HatchmarkQLDBLedger}/*'
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: 
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/hatchmark-assets'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/hatchmark-assets/index/*'
         - PolicyName: S3ReadPolicy
           PolicyDocument:
             Version: '2012-10-17'
@@ -168,16 +177,9 @@ Resources:
         UploadInitiate:
           Type: HttpApi
           Properties:
+            ApiId: !Ref HatchmarkHttpApi
             Path: /uploads/initiate
             Method: POST
-            CorsConfiguration:
-              AllowOrigins:
-                - "*"
-              AllowHeaders:
-                - Content-Type
-              AllowMethods:
-                - POST
-                - OPTIONS
   
   HatchmarkHashFunction:
     Type: AWS::Serverless::Function
@@ -217,7 +219,7 @@ Resources:
       Role: !GetAtt HatchmarkLedgerRole.Arn
       Environment:
         Variables:
-          QLDB_LEDGER_NAME: !Ref HatchmarkQLDBLedger
+          DYNAMODB_TABLE_NAME: hatchmark-assets
           LOG_LEVEL: INFO
   
   HatchmarkVerificationFunction:
@@ -232,23 +234,16 @@ Resources:
       Role: !GetAtt HatchmarkVerificationRole.Arn
       Environment:
         Variables:
-          QLDB_LEDGER_NAME: !Ref HatchmarkQLDBLedger
+          DYNAMODB_TABLE_NAME: hatchmark-assets
           PROCESSED_BUCKET: !Ref ProcessedBucketName
           LOG_LEVEL: INFO
       Events:
         VerifyArtwork:
           Type: HttpApi
           Properties:
+            ApiId: !Ref HatchmarkHttpApi
             Path: /verify
             Method: POST
-            CorsConfiguration:
-              AllowOrigins:
-                - "*"
-              AllowHeaders:
-                - Content-Type
-              AllowMethods:
-                - POST
-                - OPTIONS
 
   # ========================================================================
   # S3 BUCKETS
@@ -296,15 +291,15 @@ Resources:
               SSEAlgorithm: AES256
   
   # ========================================================================
-  # QLDB LEDGER
+  # QLDB LEDGER (COMMENTED OUT - USING DYNAMODB INSTEAD)
   # ========================================================================
   
-  HatchmarkQLDBLedger:
-    Type: AWS::QLDB::Ledger
-    Properties:
-      Name: hatchmark-ledger
-      PermissionsMode: STANDARD
-      DeletionProtection: true
+  # HatchmarkQLDBLedger:
+  #   Type: AWS::QLDB::Ledger
+  #   Properties:
+  #     Name: hatchmark-ledger
+  #     PermissionsMode: STANDARD
+  #     DeletionProtection: true
   
   # ========================================================================
   # SQS QUEUE
@@ -587,11 +582,11 @@ Outputs:
     Export:
       Name: HatchmarkProcessedBucket
   
-  QLDBLedger:
-    Description: "QLDB Ledger Name"
-    Value: !Ref HatchmarkQLDBLedger
+  DynamoDBTable:
+    Description: "DynamoDB Table for asset ledger"
+    Value: "hatchmark-assets"
     Export:
-      Name: HatchmarkQLDBLedger
+      Name: HatchmarkDynamoDBTable
   
   SQSQueue:
     Description: "SQS Queue URL for watermarking"

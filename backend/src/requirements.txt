@@ -1,8 +1,8 @@
 boto3>=1.34.0
 botocore>=1.34.0
+aws-lambda-powertools>=2.24.0
 Pillow>=10.0.0
 imagehash>=4.3.1
 pyqldb>=3.2.3
 amazon-ion>=0.9.3
-aws-lambda-powertools>=2.24.0
 steganography>=0.1.1

@@ -11,8 +11,8 @@ s3_client = boto3.client('s3')
 sqs_client = boto3.client('sqs')
 
 # Environment variables with fallback defaults
-INGESTION_BUCKET = os.environ.get('INGESTION_BUCKET', 'hatchmark-ingestion-bucket-20250823004849')
-PROCESSED_BUCKET = os.environ.get('PROCESSED_BUCKET', 'hatchmark-processed-bucket-20250823004849')
+INGESTION_BUCKET = os.environ.get('INGESTION_BUCKET', 'hatchmark-ingestion-bucket-36933227')
+PROCESSED_BUCKET = os.environ.get('PROCESSED_BUCKET', 'hatchmark-processed-bucket-36933227')
 SQS_QUEUE_URL = os.environ.get('SQS_QUEUE_URL')
 
 # Log configuration
