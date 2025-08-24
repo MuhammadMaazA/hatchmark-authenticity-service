@@ -103,41 +103,36 @@ hatchmark-authenticity-service/
 
 ## Development Phases
 
-### ✅ Phase 0: Foundation & Setup
-- [x] Project structure
-- [x] AWS security setup
-- [x] Docker environment
+### Phase 0: Foundation & Setup
 
-### 🔄 Phase 1: The Ingestion Core (In Progress)
-- [x] S3 bucket creation
-- [x] Lambda function for presigned URLs
-- [x] API Gateway endpoint
-- [ ] End-to-end testing
+Everything needed to get started locally.
 
-### ⏳ Phase 2: The Notarization Pipeline
+### Phase 1: The Ingestion Core (In Progress)
+
+###  Phase 2: The Notarization Pipeline
 - [ ] QLDB ledger setup
 - [ ] Perceptual hashing Lambda
 - [ ] Ledger-writing Lambda
 - [ ] Step Functions orchestration
 
-### ⏳ Phase 3: The Heavy Lifter
+###  Phase 3: The Heavy Lifter
 - [ ] Steganography implementation
 - [ ] Container registry (ECR)
 - [ ] Fargate task definition
 - [ ] SQS integration
 
-### ⏳ Phase 4: The Verification Endpoint
+###  Phase 4: The Verification Endpoint
 - [ ] Verification Lambda
 - [ ] Verdict logic implementation
 - [ ] API Gateway route
 
-### ⏳ Phase 5: Frontend & UX
+###  Phase 5: Frontend & UX
 - [x] Basic UI framework
 - [x] Register page
 - [x] Verify page
 - [ ] API integration testing
 
-### ⏳ Phase 6: Pre-Launch & Polish
+###  Phase 6: Pre-Launch & Polish
 - [ ] Security audit
 - [ ] Cost optimization
 - [ ] Comprehensive documentation
