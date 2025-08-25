@@ -269,7 +269,7 @@ def process_asset():
 
 if __name__ == '__main__':
     print("Starting Hatchmark Local Development Server...")
-    print("Frontend should connect to: http://localhost:3001")
+    print("Frontend should connect to: http://localhost:3002")
     print("Available endpoints:")
     print("  GET  /health")
     print("  POST /uploads/initiate")
@@ -279,4 +279,4 @@ if __name__ == '__main__':
     print("  POST /ledger")
     print("  POST /process")
     
-    app.run(host='0.0.0.0', port=3001, debug=True)
+    app.run(host='0.0.0.0', port=3002, debug=True)

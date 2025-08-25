@@ -10,7 +10,7 @@ cd /home/mmaaz/projects/hatchmark/hatchmark-authenticity-service
 # Activate virtual environment
 source .venv/bin/activate
 
-echo "📦 Building SAM application..."
+echo "Building SAM application..."
 cd backend
 sam build --use-container
 

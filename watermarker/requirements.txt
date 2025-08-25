@@ -1,4 +1,6 @@
 Pillow>=10.0.0
-steganography>=0.1.1
+imagehash>=4.3.1
 boto3>=1.34.0
 botocore>=1.34.0
+numpy>=1.24.0
+requests>=2.31.0
