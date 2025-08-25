@@ -48,9 +48,9 @@ def check_prerequisites():
     # Check AWS credentials
     try:
         boto3.client('sts').get_caller_identity()
-        print("✅ AWS credentials are configured")
+        print(" AWS credentials are configured")
     except Exception:
-        print("❌ AWS credentials not configured. Run 'aws configure'")
+        print(" AWS credentials not configured. Run 'aws configure'")
         sys.exit(1)
 
 def create_ecr_repository():
@@ -62,19 +62,19 @@ def create_ecr_repository():
     
     try:
         response = ecr.describe_repositories(repositoryNames=[repo_name])
-        print(f"✅ ECR repository '{repo_name}' already exists")
+        print(f" ECR repository '{repo_name}' already exists")
         return response['repositories'][0]['repositoryUri']
     except ClientError as e:
         if e.response['Error']['Code'] == 'RepositoryNotFoundException':
             try:
                 response = ecr.create_repository(repositoryName=repo_name)
-                print(f"✅ Created ECR repository '{repo_name}'")
+                print(f" Created ECR repository '{repo_name}'")
                 return response['repository']['repositoryUri']
             except Exception as e:
-                print(f"❌ Failed to create ECR repository: {e}")
+                print(f" Failed to create ECR repository: {e}")
                 sys.exit(1)
         else:
-            print(f"❌ Error checking ECR repository: {e}")
+            print(f" Error checking ECR repository: {e}")
             sys.exit(1)
 
 def build_and_push_watermarker(ecr_uri):
@@ -86,19 +86,19 @@ def build_and_push_watermarker(ecr_uri):
         region = boto3.Session().region_name or 'us-east-1'
         login_cmd = f"aws ecr get-login-password --region {region} | docker login --username AWS --password-stdin {ecr_uri.split('/')[0]}"
         subprocess.run(login_cmd, shell=True, check=True)
-        print("✅ Logged into ECR")
+        print(" Logged into ECR")
         
         # Build image
         subprocess.run(["docker", "build", "-t", "hatchmark-watermarker", "./watermarker"], check=True)
-        print("✅ Built watermarker image")
+        print(" Built watermarker image")
         
         # Tag and push
         subprocess.run(["docker", "tag", "hatchmark-watermarker:latest", f"{ecr_uri}:latest"], check=True)
         subprocess.run(["docker", "push", f"{ecr_uri}:latest"], check=True)
-        print("✅ Pushed watermarker image to ECR")
+        print(" Pushed watermarker image to ECR")
         
     except subprocess.CalledProcessError as e:
-        print(f"❌ Failed to build/push watermarker: {e}")
+        print(f" Failed to build/push watermarker: {e}")
         sys.exit(1)
 
 def deploy_sam_stack():
@@ -108,7 +108,7 @@ def deploy_sam_stack():
     try:
         # Build SAM application
         subprocess.run(["sam", "build"], cwd="backend", check=True)
-        print("✅ Built SAM application")
+        print(" Built SAM application")
         
         # Deploy SAM stack
         stack_name = "hatchmark-dev"
@@ -121,12 +121,12 @@ def deploy_sam_stack():
             "IngestionBucketName=hatchmark-ingestion-bucket-20250823004849",
             "ProcessedBucketName=hatchmark-processed-bucket-20250823004849"
         ], cwd="backend", check=True)
-        print("✅ Deployed SAM stack")
+        print(" Deployed SAM stack")
         
         return stack_name
         
     except subprocess.CalledProcessError as e:
-        print(f"❌ Failed to deploy SAM stack: {e}")
+        print(f" Failed to deploy SAM stack: {e}")
         sys.exit(1)
 
 def setup_qldb_tables():
@@ -136,9 +136,9 @@ def setup_qldb_tables():
     try:
         # Run the QLDB setup script
         subprocess.run([sys.executable, "scripts/setup_qldb.py"], check=True)
-        print("✅ QLDB tables and indexes created")
+        print(" QLDB tables and indexes created")
     except subprocess.CalledProcessError as e:
-        print(f"❌ Failed to setup QLDB: {e}")
+        print(f" Failed to setup QLDB: {e}")
         print("You may need to run 'pip install pyqldb' first")
 
 def get_stack_outputs(stack_name):
@@ -156,7 +156,7 @@ def get_stack_outputs(stack_name):
         
         return output_dict
     except Exception as e:
-        print(f"❌ Failed to get stack outputs: {e}")
+        print(f" Failed to get stack outputs: {e}")
         return {}
 
 def display_results(outputs):

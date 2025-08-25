@@ -88,11 +88,11 @@ def test_lambda_handlers():
         result = generate_presigned_url(event, context)
         print(f"Status Code: {result['statusCode']}")
         if result['statusCode'] == 200:
-            print("✅ generate_presigned_url working correctly")
+            print(" generate_presigned_url working correctly")
         else:
-            print("❌ generate_presigned_url failed")
+            print(" generate_presigned_url failed")
     except Exception as e:
-        print(f"❌ Error testing generate_presigned_url: {e}")
+        print(f" Error testing generate_presigned_url: {e}")
     
     # Test compute_phash
     print("\n--- Testing compute_phash ---")
@@ -109,11 +109,11 @@ def test_lambda_handlers():
         result = compute_phash(s3_event, context)
         print(f"Status Code: {result['statusCode']}")
         if result['statusCode'] == 200:
-            print("✅ compute_phash working correctly")
+            print(" compute_phash working correctly")
         else:
-            print("❌ compute_phash failed")
+            print(" compute_phash failed")
     except Exception as e:
-        print(f"❌ Error testing compute_phash: {e}")
+        print(f" Error testing compute_phash: {e}")
 
 def test_steganography():
     """Test steganography encoding and decoding."""
@@ -133,25 +133,25 @@ def test_steganography():
         
         # Encode
         Steganography.encode(test_img, output_img, secret_data)
-        print("✅ Steganography encoding successful")
+        print(" Steganography encoding successful")
         
         # Decode
         decoded_data = Steganography.decode(output_img)
         print(f"Decoded data: {decoded_data}")
         
         if decoded_data == secret_data:
-            print("✅ Steganography round-trip successful")
+            print(" Steganography round-trip successful")
         else:
-            print("❌ Steganography data mismatch")
+            print(" Steganography data mismatch")
         
         # Clean up
         os.remove(test_img)
         os.remove(output_img)
         
     except ImportError:
-        print("❌ Steganography library not available")
+        print(" Steganography library not available")
     except Exception as e:
-        print(f"❌ Steganography test failed: {e}")
+        print(f" Steganography test failed: {e}")
 
 def test_docker_watermarker():
     """Test if Docker watermarker can be built."""
@@ -163,10 +163,10 @@ def test_docker_watermarker():
         # Check if Docker is available
         result = subprocess.run(['docker', '--version'], capture_output=True, text=True)
         if result.returncode != 0:
-            print("❌ Docker not available")
+            print(" Docker not available")
             return
         
-        print("✅ Docker is available")
+        print(" Docker is available")
         
         # Try to build the watermarker image
         print("Building watermarker Docker image...")
@@ -176,7 +176,7 @@ def test_docker_watermarker():
         ], capture_output=True, text=True)
         
         if build_result.returncode == 0:
-            print("✅ Docker image built successfully")
+            print(" Docker image built successfully")
             
             # Try to run the container in test mode
             print("Running watermarker in test mode...")
@@ -185,20 +185,20 @@ def test_docker_watermarker():
             ], capture_output=True, text=True, timeout=30)
             
             if run_result.returncode == 0:
-                print("✅ Watermarker container runs successfully")
+                print(" Watermarker container runs successfully")
                 print("Container output:")
                 print(run_result.stdout)
             else:
-                print("❌ Watermarker container failed")
+                print(" Watermarker container failed")
                 print("Error:", run_result.stderr)
         else:
-            print("❌ Docker build failed")
+            print(" Docker build failed")
             print("Error:", build_result.stderr)
             
     except subprocess.TimeoutExpired:
-        print("⚠️ Container test timed out (this is normal for test mode)")
+        print(" Container test timed out (this is normal for test mode)")
     except Exception as e:
-        print(f"❌ Docker test error: {e}")
+        print(f" Docker test error: {e}")
 
 def test_image_similarity():
     """Test image similarity detection with different modifications."""
@@ -245,7 +245,7 @@ def test_image_similarity():
         
         print("\nSimilarity Test Results:")
         for mod_name, sim_score in modifications:
-            status = "✅" if sim_score > 0.8 else "⚠️" if sim_score > 0.6 else "❌"
+            status = "" if sim_score > 0.8 else "" if sim_score > 0.6 else ""
             print(f"{status} {mod_name}: {sim_score:.2%} similar")
         
         # Clean up
@@ -254,7 +254,7 @@ def test_image_similarity():
                 os.remove(filename)
                 
     except Exception as e:
-        print(f"❌ Image similarity test failed: {e}")
+        print(f" Image similarity test failed: {e}")
 
 def check_aws_configuration():
     """Check AWS configuration and permissions."""
@@ -264,25 +264,25 @@ def check_aws_configuration():
         # Check AWS credentials
         sts = boto3.client('sts')
         identity = sts.get_caller_identity()
-        print(f"✅ AWS credentials configured")
+        print(f" AWS credentials configured")
         print(f"Account ID: {identity['Account']}")
         print(f"User/Role: {identity['Arn']}")
         
         # Check S3 access
         s3 = boto3.client('s3')
         buckets = s3.list_buckets()
-        print(f"✅ S3 access working ({len(buckets['Buckets'])} buckets visible)")
+        print(f" S3 access working ({len(buckets['Buckets'])} buckets visible)")
         
         # Check if specific buckets exist
         for bucket_pattern in ['hatchmark-ingestion', 'hatchmark-processed']:
             matching_buckets = [b['Name'] for b in buckets['Buckets'] if bucket_pattern in b['Name']]
             if matching_buckets:
-                print(f"✅ Found Hatchmark bucket: {matching_buckets[0]}")
+                print(f" Found Hatchmark bucket: {matching_buckets[0]}")
             else:
-                print(f"⚠️ No bucket found matching pattern: {bucket_pattern}")
+                print(f" No bucket found matching pattern: {bucket_pattern}")
         
     except Exception as e:
-        print(f"❌ AWS configuration issue: {e}")
+        print(f" AWS configuration issue: {e}")
 
 def main():
     """Run all tests."""
@@ -293,9 +293,9 @@ def main():
     try:
         import boto3
         import PIL
-        print("✅ Core dependencies available")
+        print(" Core dependencies available")
     except ImportError as e:
-        print(f"❌ Missing dependency: {e}")
+        print(f" Missing dependency: {e}")
         return
     
     # Run tests
@@ -307,7 +307,7 @@ def main():
     test_docker_watermarker()
     
     print("\n" + "=" * 50)
-    print("🎯 Testing completed!")
+    print(" Testing completed!")
     print("\nNext steps:")
     print("1. Fix any failing tests")
     print("2. Deploy infrastructure: ./deployment/deploy.sh")

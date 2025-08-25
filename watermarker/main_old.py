@@ -1,10 +1,168 @@
+#!/usr/bin/env python3
+"""
+Hatchmark Watermarker Service
+A containerized service that applies invisible watermarks to digital content
+"""
+
 import os
+import sys
 import json
+import time
+import logging
+import hashlib
+from datetime import datetime, timezone
+from io import BytesIO
+from typing import Optional, Dict, Any
+
 import boto3
-import io
-from PIL import Image
-from steganography.steganography import Steganography
 from botocore.exceptions import ClientError
+from PIL import Image
+import imagehash
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+class HatchmarkWatermarker:
+    """Main watermarker class"""
+    
+    def __init__(self):
+        """Initialize the watermarker"""
+        self.sqs_queue_url = os.environ.get('SQS_QUEUE_URL')
+        self.ingestion_bucket = os.environ.get('INGESTION_BUCKET', 'hatchmark-ingestion-bucket-36933227')
+        self.processed_bucket = os.environ.get('PROCESSED_BUCKET', 'hatchmark-processed-bucket-36933227')
+        
+        # Initialize AWS clients
+        try:
+            self.s3_client = boto3.client('s3')
+            self.sqs_client = boto3.client('sqs') if self.sqs_queue_url else None
+            self.dynamodb = boto3.resource('dynamodb')
+            
+            # Initialize DynamoDB table
+            try:
+                self.assets_table = self.dynamodb.Table('hatchmark-assets')
+            except Exception as e:
+                logger.warning(f"DynamoDB table not available: {e}")
+                self.assets_table = None
+                
+        except Exception as e:
+            logger.warning(f"AWS clients not available: {e}")
+            self.s3_client = None
+            self.sqs_client = None
+            self.assets_table = None
+        
+        logger.info("Hatchmark Watermarker initialized")
+    
+    def compute_perceptual_hash(self, image: Image.Image) -> str:
+        """Compute perceptual hash of an image"""
+        try:
+            # Compute phash using imagehash library
+            phash = imagehash.phash(image)
+            return str(phash)
+        except Exception as e:
+            logger.error(f"Error computing perceptual hash: {e}")
+            raise
+    
+    def apply_watermark(self, image: Image.Image, watermark_data: str) -> Image.Image:
+        """Apply invisible watermark to image using steganography"""
+        try:
+            # Simple steganography: modify LSB of pixels
+            # Convert watermark data to binary
+            watermark_binary = ''.join(format(ord(char), '08b') for char in watermark_data)
+            watermark_binary += '1111111111111110'  # Delimiter
+            
+            # Convert image to RGB if not already
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            
+            # Create a copy to modify
+            watermarked = image.copy()
+            pixels = list(watermarked.getdata())
+            
+            # Apply watermark to LSB of red channel
+            watermark_index = 0
+            for i, pixel in enumerate(pixels):
+                if watermark_index < len(watermark_binary):
+                    r, g, b = pixel
+                    # Modify LSB of red channel
+                    r = (r & 0xFE) | int(watermark_binary[watermark_index])
+                    pixels[i] = (r, g, b)
+                    watermark_index += 1
+                else:
+                    break
+            
+            # Create new image with modified pixels
+            watermarked.putdata(pixels)
+            return watermarked
+            
+        except Exception as e:
+            logger.error(f"Error applying watermark: {e}")
+            # Return original image if watermarking fails
+            return image
+    
+    def process_image_standalone(self, image_path: str) -> str:
+        """Process a single image in standalone mode"""
+        try:
+            logger.info(f"Processing image: {image_path}")
+            
+            # Open image
+            image = Image.open(image_path)
+            logger.info(f"Opened image: {image.size}, mode: {image.mode}")
+            
+            # Compute perceptual hash
+            perceptual_hash = self.compute_perceptual_hash(image)
+            logger.info(f"Computed perceptual hash: {perceptual_hash}")
+            
+            # Create watermark data
+            watermark_data = json.dumps({
+                'assetId': f"test_{int(time.time())}",
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'hash': perceptual_hash
+            })
+            
+            # Apply watermark
+            watermarked_image = self.apply_watermark(image, watermark_data)
+            
+            # Save watermarked image
+            output_path = image_path.replace('.', '_watermarked.')
+            watermarked_image.save(output_path, quality=95)
+            
+            logger.info(f"Successfully processed {image_path} -> {output_path}")
+            return output_path
+            
+        except Exception as e:
+            logger.error(f"Error processing image {image_path}: {e}")
+            raise
+    
+    def run_standalone(self, image_path: str):
+        """Run in standalone mode for testing"""
+        logger.info("Running in standalone mode")
+        
+        try:
+            processed_path = self.process_image_standalone(image_path)
+            print(f"Successfully processed: {image_path} -> {processed_path}")
+            return processed_path
+        except Exception as e:
+            print(f"Processing failed: {e}")
+            return None
+
+def main():
+    """Main entry point"""
+    watermarker = HatchmarkWatermarker()
+    
+    # Check for standalone mode (for testing)
+    if len(sys.argv) > 1:
+        image_path = sys.argv[1]
+        watermarker.run_standalone(image_path)
+    else:
+        print("Usage: python main.py <image_path>")
+        print("Example: python main.py test_image.jpg")
+
+if __name__ == '__main__':
+    main()
 
 # Initialize AWS clients
 s3_client = boto3.client('s3')
