@@ -8,12 +8,11 @@ import { Search, CheckCircle, XCircle, Clock, Upload, FileImage, AlertTriangle }
 interface VerificationResult {
   assetId: string;
   filename: string;
-  status: 'verified' | 'modified' | 'unknown';
+  status: 'verified' | 'unknown' | 'error' | 'modified';
   confidence: number;
   timestamp: string;
-  originalHash: string;
-  currentHash?: string;
   creator?: string;
+  verification_note?: string;
 }
 
 const VerificationSection = () => {
@@ -302,16 +301,6 @@ const VerificationSection = () => {
                     <h4 className="font-medium text-sm text-muted-foreground mb-1">Filename</h4>
                     <p className="text-sm">{verificationResult.filename}</p>
                   </div>
-                  <div>
-                    <h4 className="font-medium text-sm text-muted-foreground mb-1">Original Hash</h4>
-                    <p className="font-mono text-sm bg-muted p-2 rounded">{verificationResult.originalHash}</p>
-                  </div>
-                  {verificationResult.currentHash && (
-                    <div>
-                      <h4 className="font-medium text-sm text-muted-foreground mb-1">Current Hash</h4>
-                      <p className="font-mono text-sm bg-muted p-2 rounded">{verificationResult.currentHash}</p>
-                    </div>
-                  )}
                   {verificationResult.status === 'verified' && (
                     <div>
                       <h4 className="font-medium text-sm text-muted-foreground mb-1">Registered</h4>

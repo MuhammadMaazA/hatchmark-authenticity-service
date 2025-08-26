@@ -370,10 +370,6 @@ const UploadSection = () => {
           <span class="label">Status:</span>
           <span class="value">Protected & Verified</span>
         </div>
-        <div class="field">
-          <span class="label">Verification:</span>
-          <span class="value">Digital Signature</span>
-        </div>
       </div>
     </div>
     
@@ -629,8 +625,8 @@ const UploadSection = () => {
               {uploadStatus === 'processing' && (
                 <div className="text-center py-8">
                   <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-                  <p className="font-medium">Processing and generating hash...</p>
-                  <p className="text-sm text-muted-foreground">Creating authenticity fingerprint</p>
+                  <p className="font-medium">Processing and creating digital fingerprint...</p>
+                  <p className="text-sm text-muted-foreground">Generating authenticity certificate</p>
                 </div>
               )}
 
@@ -676,7 +672,7 @@ const UploadSection = () => {
                         </div>
                         <div className="flex items-center gap-2">
                           <CheckCircle className="w-4 h-4 text-green-600" />
-                          <span>Hash Generated</span>
+                          <span>Digital Fingerprint Created</span>
                         </div>
                         <div className="flex items-center gap-2">
                           <CheckCircle className="w-4 h-4 text-green-600" />

@@ -352,7 +352,6 @@ def verify_asset():
                         'status': 'verified',
                         'confidence': 95,
                         'timestamp': asset['timestamp'],
-                        'originalHash': asset['perceptualHash'],
                         'creator': asset.get('creator', 'anonymous')
                     })
             
@@ -363,7 +362,6 @@ def verify_asset():
                 'status': 'unknown',
                 'confidence': 0,
                 'timestamp': 'not_found',
-                'originalHash': 'not_found',
                 'creator': 'unknown'
             })
         
@@ -405,10 +403,8 @@ def verify_asset():
                                 'status': 'verified',
                                 'confidence': 98,
                                 'timestamp': found_asset['timestamp'],
-                                'originalHash': found_asset['perceptualHash'],
-                                'currentHash': perceptual_hash,
                                 'creator': found_asset.get('creator', 'anonymous'),
-                                'verification_note': 'Image content verified by perceptual hash'
+                                'verification_note': 'Image content verified by digital fingerprint'
                             })
                         else:
                             print(f"Verification: No matching asset found for hash: {perceptual_hash}")
@@ -420,8 +416,6 @@ def verify_asset():
                                 'status': 'unknown',
                                 'confidence': 0,
                                 'timestamp': datetime.now(timezone.utc).isoformat(),
-                                'originalHash': 'not_found',
-                                'currentHash': perceptual_hash,
                                 'creator': 'unknown',
                                 'verification_note': 'Image not found in authenticity registry'
                             })
