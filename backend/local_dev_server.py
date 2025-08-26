@@ -67,6 +67,10 @@ def initiate_upload():
         if not filename.strip():
             return jsonify({'error': 'filename cannot be empty'}), 400
         
+        # Check for duplicate files if file content is provided
+        file_size = data.get('fileSize', 0)
+        content_type = data.get('contentType', '')
+        
         # Generate unique object key
         upload_id = str(uuid.uuid4())
         object_key = f"uploads/{upload_id}/{filename}"
@@ -274,6 +278,59 @@ def complete_upload():
         
     except Exception as e:
         logger.error(f"Upload completion failed: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/uploads/check-duplicate', methods=['POST'])
+def check_duplicate():
+    """Check if uploaded file already exists in the registry"""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        if not file.content_type.startswith('image/'):
+            return jsonify({'error': 'Only image files are supported'}), 400
+        
+        # Calculate perceptual hash
+        try:
+            from PIL import Image
+            import io
+            import imagehash
+            
+            file_content = file.read()
+            image = Image.open(io.BytesIO(file_content))
+            perceptual_hash = str(imagehash.phash(image))
+            
+            print(f"Duplicate check: Calculated hash: {perceptual_hash}")
+            
+            # Check if this hash exists in our registry
+            if perceptual_hash in mock_assets:
+                existing_asset = mock_assets[perceptual_hash]
+                return jsonify({
+                    'isDuplicate': True,
+                    'existingAsset': {
+                        'assetId': existing_asset['assetId'],
+                        'filename': existing_asset['filename'],
+                        'creator': existing_asset.get('creator', 'Unknown'),
+                        'timestamp': existing_asset['timestamp']
+                    },
+                    'message': 'This image has already been registered'
+                })
+            else:
+                return jsonify({
+                    'isDuplicate': False,
+                    'message': 'Image is unique and can be uploaded'
+                })
+        
+        except Exception as e:
+            print(f"Error calculating hash for duplicate check: {e}")
+            return jsonify({'error': f'Error processing image: {str(e)}'}), 500
+    
+    except Exception as e:
+        logger.error(f"Duplicate check failed: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/verify', methods=['GET', 'POST'])

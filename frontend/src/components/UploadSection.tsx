@@ -20,11 +20,47 @@ interface UserInfo {
 
 const UploadSection = () => {
   const [isDragging, setIsDragging] = useState(false);
-  const [uploadStatus, setUploadStatus] = useState<'idle' | 'user-info' | 'uploading' | 'processing' | 'success' | 'error'>('idle');
+  const [uploadStatus, setUploadStatus] = useState<'idle' | 'checking' | 'duplicate' | 'user-info' | 'uploading' | 'processing' | 'success' | 'error'>('idle');
   const [file, setFile] = useState<File | null>(null);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [userInfo, setUserInfo] = useState<UserInfo>({ name: '', email: '' });
+  const [duplicateInfo, setDuplicateInfo] = useState<any>(null);
+
+  const checkForDuplicate = async (file: File) => {
+    try {
+      setUploadStatus('checking');
+      setErrorMessage('');
+      
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      const response = await fetch('http://localhost:3002/uploads/check-duplicate', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to check for duplicates');
+      }
+
+      const result = await response.json();
+      
+      if (result.isDuplicate) {
+        setDuplicateInfo(result.existingAsset);
+        setUploadStatus('duplicate');
+        return true;
+      } else {
+        setUploadStatus('user-info');
+        return false;
+      }
+    } catch (error) {
+      console.error('Duplicate check failed:', error);
+      setErrorMessage('Failed to check for duplicates. You can still proceed with upload.');
+      setUploadStatus('user-info');
+      return false;
+    }
+  };
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -36,7 +72,7 @@ const UploadSection = () => {
     setIsDragging(false);
   }, []);
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
     
@@ -45,7 +81,7 @@ const UploadSection = () => {
       const file = droppedFiles[0];
       if (file.type.startsWith('image/')) {
         setFile(file);
-        setUploadStatus('user-info');
+        await checkForDuplicate(file);
       } else {
         setErrorMessage('Please upload an image file (JPG, PNG, etc.)');
         setUploadStatus('error');
@@ -53,11 +89,11 @@ const UploadSection = () => {
     }
   }, []);
 
-  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
       setFile(selectedFile);
-      setUploadStatus('user-info');
+      await checkForDuplicate(selectedFile);
     }
   }, []);
 
@@ -154,38 +190,50 @@ const UploadSection = () => {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Hatchmark Digital Authenticity Certificate</title>
   <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, "Helvetica Neue", Arial, sans-serif;
       line-height: 1.6;
-      color: #333;
-      max-width: 800px;
-      margin: 0 auto;
-      padding: 2rem;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: hsl(222.2 84% 4.9%);
+      background: linear-gradient(135deg, hsl(221.2 83% 53%) 0%, hsl(262.1 83% 58%) 100%);
       min-height: 100vh;
+      padding: 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
     .certificate {
-      background: white;
+      background: hsl(0 0% 100%);
       border-radius: 12px;
       padding: 3rem;
-      box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-      border: 3px solid #667eea;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+      border: 1px solid hsl(214.3 31.8% 91.4%);
+      max-width: 800px;
+      width: 100%;
     }
     .header {
       text-align: center;
       margin-bottom: 2rem;
-      border-bottom: 2px solid #eee;
+      border-bottom: 2px solid hsl(214.3 31.8% 91.4%);
       padding-bottom: 2rem;
     }
     .logo {
       font-size: 2.5rem;
-      font-weight: bold;
-      color: #667eea;
+      font-weight: 700;
+      color: hsl(221.2 83% 53%);
       margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
     }
     .subtitle {
       font-size: 1.2rem;
-      color: #666;
+      color: hsl(215.4 16.3% 46.9%);
       font-weight: 500;
     }
     .content {
@@ -197,53 +245,83 @@ const UploadSection = () => {
     .field {
       display: flex;
       justify-content: space-between;
-      padding: 0.5rem 0;
-      border-bottom: 1px solid #eee;
+      padding: 0.75rem 0;
+      border-bottom: 1px solid hsl(214.3 31.8% 91.4%);
     }
     .label {
       font-weight: 600;
-      color: #333;
+      color: hsl(222.2 84% 4.9%);
     }
     .value {
-      color: #666;
-      font-family: monospace;
-      background: #f5f5f5;
-      padding: 0.2rem 0.5rem;
-      border-radius: 4px;
+      color: hsl(215.4 16.3% 46.9%);
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+      background: hsl(210 40% 98%);
+      padding: 0.25rem 0.5rem;
+      border-radius: 6px;
+      font-size: 0.875rem;
     }
     .status {
-      background: #22c55e;
-      color: white;
-      padding: 0.5rem 1rem;
-      border-radius: 6px;
-      font-weight: bold;
+      background: hsl(142.1 76.2% 36.3%);
+      color: hsl(355.7 100% 97.3%);
+      padding: 1rem 2rem;
+      border-radius: 8px;
+      font-weight: 600;
       text-align: center;
       margin: 2rem 0;
+      font-size: 1.1rem;
+      letter-spacing: 0.025em;
     }
     .footer {
       text-align: center;
       margin-top: 3rem;
       padding-top: 2rem;
-      border-top: 2px solid #eee;
-      color: #666;
+      border-top: 2px solid hsl(214.3 31.8% 91.4%);
+      color: hsl(215.4 16.3% 46.9%);
       font-size: 0.9rem;
     }
+    .qr-section {
+      text-align: center;
+      margin: 2rem 0;
+      padding: 1.5rem;
+      background: hsl(210 40% 98%);
+      border-radius: 12px;
+      border: 1px solid hsl(214.3 31.8% 91.4%);
+    }
     .qr-placeholder {
-      width: 100px;
-      height: 100px;
-      background: #f0f0f0;
-      border: 2px dashed #ccc;
+      width: 120px;
+      height: 120px;
+      background: hsl(0 0% 100%);
+      border: 2px dashed hsl(214.3 31.8% 91.4%);
       display: flex;
       align-items: center;
       justify-content: center;
-      margin: 0 auto;
+      margin: 0 auto 1rem;
       border-radius: 8px;
-      color: #999;
+      color: hsl(215.4 16.3% 46.9%);
       font-size: 0.8rem;
+      font-weight: 500;
     }
     @media print {
-      body { background: white; padding: 0; }
-      .certificate { box-shadow: none; border: 2px solid #333; }
+      body { 
+        background: white; 
+        padding: 0; 
+        display: block;
+      }
+      .certificate { 
+        box-shadow: none; 
+        border: 2px solid hsl(222.2 84% 4.9%);
+        margin: 0;
+      }
+    }
+    @media (max-width: 768px) {
+      .content {
+        grid-template-columns: 1fr;
+        gap: 1rem;
+      }
+      .certificate {
+        padding: 2rem;
+        margin: 1rem;
+      }
     }
   </style>
 </head>
@@ -262,7 +340,7 @@ const UploadSection = () => {
       <div>
         <div class="field">
           <span class="label">Asset ID:</span>
-          <span class="value">${uploadResult.assetId || 'Processing...'}</span>
+          <span class="value">${uploadResult.assetId ? uploadResult.assetId.slice(0, 25) + '...' : 'Processing...'}</span>
         </div>
         <div class="field">
           <span class="label">Filename:</span>
@@ -273,8 +351,8 @@ const UploadSection = () => {
           <span class="value">${(file.size / 1024 / 1024).toFixed(2)} MB</span>
         </div>
         <div class="field">
-          <span class="label">Upload ID:</span>
-          <span class="value">${uploadResult.uploadId}</span>
+          <span class="label">Creator:</span>
+          <span class="value">${userInfo.name || 'Anonymous'}</span>
         </div>
       </div>
       
@@ -284,37 +362,33 @@ const UploadSection = () => {
           <span class="value">${uploadResult.timestamp ? new Date(uploadResult.timestamp).toLocaleString() : new Date().toLocaleString()}</span>
         </div>
         <div class="field">
-          <span class="label">Creator:</span>
-          <span class="value">${userInfo.name || 'Anonymous'}</span>
-        </div>
-        <div class="field">
-          <span class="label">Email:</span>
-          <span class="value">${userInfo.email || 'Not provided'}</span>
-        </div>
-        <div class="field">
           <span class="label">Storage:</span>
-          <span class="value">AWS S3 Secure</span>
+          <span class="value">Secure Cloud Storage</span>
         </div>
         <div class="field">
-          <span class="label">Blockchain:</span>
-          <span class="value">Ethereum</span>
+          <span class="label">Authentication:</span>
+          <span class="value">Perceptual Hash</span>
+        </div>
+        <div class="field">
+          <span class="label">Status:</span>
+          <span class="value">Protected & Verified</span>
         </div>
       </div>
     </div>
     
-    <div style="text-align: center; margin: 2rem 0;">
+    <div class="qr-section">
       <div class="qr-placeholder">
         QR Code
       </div>
-      <p style="margin-top: 1rem; font-size: 0.9rem; color: #666;">
-        Scan to verify authenticity
+      <p style="font-size: 0.9rem; color: hsl(215.4 16.3% 46.9%); margin: 0;">
+        Scan to verify authenticity online
       </p>
     </div>
     
     <div class="footer">
-      <p><strong>This certificate verifies the authenticity and integrity of the digital asset.</strong></p>
+      <p style="font-weight: 600; margin-bottom: 0.5rem;">This certificate verifies the authenticity and integrity of the digital asset.</p>
       <p>Certificate generated on ${new Date().toLocaleDateString()} by Hatchmark Digital Authenticity Service</p>
-      <p>Learn more at <strong>hatchmark.io</strong></p>
+      <p style="margin-top: 1rem;">Learn more at <strong>hatchmark.io</strong></p>
     </div>
   </div>
 </body>
@@ -339,6 +413,7 @@ const UploadSection = () => {
     setUploadStatus('idle');
     setErrorMessage('');
     setUserInfo({ name: '', email: '' });
+    setDuplicateInfo(null);
   };
 
   const handleUserInfoSubmit = () => {
@@ -425,6 +500,66 @@ const UploadSection = () => {
                   <AlertCircle className="w-8 h-8 text-red-600" />
                 )}
               </div>
+
+              {uploadStatus === 'checking' && (
+                <div className="text-center py-8">
+                  <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+                  <p className="font-medium">Checking for duplicates...</p>
+                  <p className="text-sm text-muted-foreground">Verifying image uniqueness</p>
+                </div>
+              )}
+
+              {uploadStatus === 'duplicate' && duplicateInfo && (
+                <div className="space-y-6">
+                  <div className="text-center py-6 bg-orange-50 rounded-xl border border-orange-200">
+                    <AlertCircle className="w-12 h-12 text-orange-600 mx-auto mb-4" />
+                    <h3 className="text-xl font-semibold text-orange-900 mb-2">
+                      Duplicate Detected
+                    </h3>
+                    <p className="text-orange-700">
+                      This image has already been registered in our system.
+                    </p>
+                  </div>
+
+                  <div className="p-6 bg-background rounded-xl border">
+                    <h4 className="font-semibold mb-4">Existing Registration Details</h4>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Asset ID:</span>
+                        <span className="font-mono">{duplicateInfo.assetId.slice(0, 20)}...</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Original Filename:</span>
+                        <span className="font-mono">{duplicateInfo.filename}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Registered by:</span>
+                        <span>{duplicateInfo.creator}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Registration Date:</span>
+                        <span>{new Date(duplicateInfo.timestamp).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-3">
+                    <Button 
+                      variant="outline" 
+                      onClick={resetUpload}
+                      className="flex-1"
+                    >
+                      Choose Different Image
+                    </Button>
+                    <Button 
+                      onClick={() => setUploadStatus('user-info')}
+                      className="flex-1"
+                    >
+                      Continue Anyway
+                    </Button>
+                  </div>
+                </div>
+              )}
 
               {uploadStatus === 'user-info' && (
                 <div className="space-y-6">
@@ -516,22 +651,20 @@ const UploadSection = () => {
                     <div>
                       <h4 className="font-semibold mb-2">Asset Details</h4>
                       <div className="space-y-2 text-sm">
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Upload ID:</span>
-                          <span className="font-mono">{uploadResult.uploadId}</span>
-                        </div>
                         {uploadResult.assetId && (
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Asset ID:</span>
-                            <span className="font-mono">{uploadResult.assetId}</span>
+                            <span className="font-mono">{uploadResult.assetId.slice(0, 20)}...</span>
                           </div>
                         )}
-                        {uploadResult.perceptualHash && (
-                          <div className="flex justify-between">
-                            <span className="text-muted-foreground">Hash:</span>
-                            <span className="font-mono text-xs">{uploadResult.perceptualHash.slice(0, 16)}...</span>
-                          </div>
-                        )}
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Filename:</span>
+                          <span className="font-mono">{file.name}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">File Size:</span>
+                          <span className="font-mono">{(file.size / 1024 / 1024).toFixed(2)} MB</span>
+                        </div>
                       </div>
                     </div>
                     
