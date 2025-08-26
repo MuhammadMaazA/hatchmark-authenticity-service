@@ -9,6 +9,7 @@ import sys
 import uuid
 import json
 import time
+import re
 import logging
 from datetime import datetime, timezone
 from flask import Flask, request, jsonify
@@ -70,7 +71,31 @@ def initiate_upload():
         upload_id = str(uuid.uuid4())
         object_key = f"uploads/{upload_id}/{filename}"
         
-        # Try to generate real presigned URL if AWS is available
+        # For local development, always use local upload endpoint
+        # In production, this would use real S3 presigned URLs
+        LOCAL_DEV_MODE = True  # Set to False for production
+        
+        if LOCAL_DEV_MODE:
+            # Use local upload endpoint for development
+            local_upload_url = f"http://localhost:3002/uploads/file/{upload_id}"
+            
+            mock_uploads[upload_id] = {
+                'uploadId': upload_id,
+                'filename': filename,
+                'objectKey': object_key,
+                'status': 'initiated',
+                'timestamp': datetime.now(timezone.utc).isoformat()
+            }
+            
+            logger.info(f"Generated local upload URL: {local_upload_url}")
+            
+            return jsonify({
+                'uploadUrl': local_upload_url,
+                'objectKey': object_key,
+                'uploadId': upload_id
+            })
+        
+        # Production S3 path (not used in local development)
         session = get_aws_session()
         if session:
             try:
@@ -103,8 +128,8 @@ def initiate_upload():
             except Exception as e:
                 logger.warning(f"Real S3 presigned URL failed: {e}")
         
-        # Fallback to mock presigned URL
-        mock_presigned_url = f"https://{INGESTION_BUCKET}.s3.eu-west-1.amazonaws.com/{object_key}?mock=true"
+        # For local development, use a local upload endpoint instead of S3
+        local_upload_url = f"http://localhost:3002/uploads/file/{upload_id}"
         
         mock_uploads[upload_id] = {
             'uploadId': upload_id,
@@ -115,7 +140,7 @@ def initiate_upload():
         }
         
         return jsonify({
-            'uploadUrl': mock_presigned_url,
+            'uploadUrl': local_upload_url,
             'objectKey': object_key,
             'uploadId': upload_id
         })
@@ -123,6 +148,47 @@ def initiate_upload():
     except Exception as e:
         logger.error(f"Upload initiation failed: {e}")
         return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/uploads/file/<upload_id>', methods=['PUT'])
+def upload_file_local(upload_id):
+    """Local file upload endpoint for development"""
+    try:
+        logger.info(f"Local file upload request for upload_id: {upload_id}")
+        
+        if upload_id not in mock_uploads:
+            return jsonify({'error': 'Upload not found'}), 404
+        
+        # Get the file data
+        file_data = request.get_data()
+        
+        if not file_data:
+            return jsonify({'error': 'No file data provided'}), 400
+        
+        # Create uploads directory if it doesn't exist
+        import os
+        uploads_dir = '/tmp/hatchmark-uploads'
+        os.makedirs(uploads_dir, exist_ok=True)
+        
+        # Save file locally (for development)
+        upload_info = mock_uploads[upload_id]
+        filename = upload_info['filename']
+        file_path = os.path.join(uploads_dir, f"{upload_id}_{filename}")
+        
+        with open(file_path, 'wb') as f:
+            f.write(file_data)
+        
+        # Update upload status
+        mock_uploads[upload_id]['status'] = 'completed'
+        mock_uploads[upload_id]['localPath'] = file_path
+        mock_uploads[upload_id]['fileSize'] = len(file_data)
+        
+        logger.info(f"File saved locally: {file_path} ({len(file_data)} bytes)")
+        
+        return '', 200  # Return empty response like S3 does
+        
+    except Exception as e:
+        logger.error(f"Local file upload failed: {e}")
+        return jsonify({'error': 'Upload failed'}), 500
 
 @app.route('/upload-status/<upload_id>', methods=['GET'])
 def get_upload_status(upload_id):
@@ -235,41 +301,55 @@ def verify_asset():
                     file_content = file.read()
                     file_size = len(file_content)
                     
-                    # Mock hash generation based on file content
-                    import hashlib
-                    file_hash = hashlib.md5(file_content).hexdigest()[:12]
+                    # Calculate perceptual hash of uploaded file (same as during registration)
+                    try:
+                        from PIL import Image
+                        import io
+                        import imagehash
+                        
+                        # Open image and calculate perceptual hash
+                        image = Image.open(io.BytesIO(file_content))
+                        perceptual_hash = str(imagehash.phash(image))
+                        
+                        print(f"Verification: Calculated perceptual hash: {perceptual_hash}")
+                        
+                        # Check if this perceptual hash exists in our registry
+                        if perceptual_hash in mock_assets:
+                            found_asset = mock_assets[perceptual_hash]
+                            print(f"Verification: Found matching asset: {found_asset['assetId']}")
+                            
+                            # File found in registry by perceptual hash
+                            return jsonify({
+                                'assetId': found_asset['assetId'],
+                                'filename': file.filename,
+                                'originalFilename': found_asset.get('filename', 'unknown'),
+                                'status': 'verified',
+                                'confidence': 98,
+                                'timestamp': found_asset['timestamp'],
+                                'originalHash': found_asset['perceptualHash'],
+                                'currentHash': perceptual_hash,
+                                'creator': found_asset.get('creator', 'anonymous'),
+                                'verification_note': 'Image content verified by perceptual hash'
+                            })
+                        else:
+                            print(f"Verification: No matching asset found for hash: {perceptual_hash}")
+                            
+                            # File not in registry - return unknown status
+                            return jsonify({
+                                'assetId': 'unknown',
+                                'filename': file.filename,
+                                'status': 'unknown',
+                                'confidence': 0,
+                                'timestamp': datetime.now(timezone.utc).isoformat(),
+                                'originalHash': 'not_found',
+                                'currentHash': perceptual_hash,
+                                'creator': 'unknown',
+                                'verification_note': 'Image not found in authenticity registry'
+                            })
                     
-                    # Check if file exists in our mock registry
-                    found_asset = None
-                    for asset_hash, asset in mock_assets.items():
-                        if asset.get('filename') == file.filename:
-                            found_asset = asset
-                            break
-                    
-                    if found_asset:
-                        # File found in registry
-                        return jsonify({
-                            'assetId': found_asset['assetId'],
-                            'filename': file.filename,
-                            'status': 'verified',
-                            'confidence': 98,
-                            'timestamp': found_asset['timestamp'],
-                            'originalHash': found_asset['perceptualHash'],
-                            'currentHash': file_hash,
-                            'creator': found_asset.get('creator', 'anonymous')
-                        })
-                    else:
-                        # File not in registry - return unknown status
-                        return jsonify({
-                            'assetId': 'unknown',
-                            'filename': file.filename,
-                            'status': 'unknown',
-                            'confidence': 0,
-                            'timestamp': datetime.now(timezone.utc).isoformat(),
-                            'originalHash': 'not_found',
-                            'currentHash': file_hash,
-                            'creator': 'unknown'
-                        })
+                    except Exception as e:
+                        print(f"Error calculating perceptual hash: {e}")
+                        return jsonify({'error': f'Error processing image: {str(e)}'}), 500
                 else:
                     return jsonify({'error': 'Please upload an image file'}), 400
             
@@ -392,60 +472,101 @@ def process_asset():
         
         object_key = data['objectKey']
         
-        # Download image from S3 and compute perceptual hash
+        # Extract upload_id from object_key (format: uploads/{upload_id}/{filename})
+        import re
+        match = re.search(r'uploads/([^/]+)/', object_key)
+        upload_id = match.group(1) if match else None
+        
+        image_data = None
+        
+        # Try to get from local file first (for development)
+        if upload_id and upload_id in mock_uploads:
+            upload_info = mock_uploads[upload_id]
+            if 'localPath' in upload_info:
+                try:
+                    with open(upload_info['localPath'], 'rb') as f:
+                        image_data = f.read()
+                    logger.info(f"Using local file: {upload_info['localPath']}")
+                except Exception as e:
+                    logger.warning(f"Failed to read local file: {e}")
+        
+        # Fallback to S3 if local file not found
+        if not image_data:
+            session = get_aws_session()
+            if not session:
+                return jsonify({'error': 'No local file and AWS session failed'}), 500
+            
+            s3_client = session.client('s3')
+            
+            try:
+                # Download the image
+                response = s3_client.get_object(Bucket=INGESTION_BUCKET, Key=object_key)
+                image_data = response['Body'].read()
+                logger.info(f"Using S3 file: s3://{INGESTION_BUCKET}/{object_key}")
+            except Exception as e:
+                logger.error(f"Failed to get file from S3: {e}")
+                return jsonify({'error': 'File not found in local storage or S3'}), 404
+        
+        if not image_data:
+            return jsonify({'error': 'No image data found'}), 404
+            
+        # Compute perceptual hash
+        import imagehash
+        from PIL import Image
+        import io
+        
+        image = Image.open(io.BytesIO(image_data))
+        perceptual_hash = str(imagehash.phash(image))
+        
+        # Add to ledger (DynamoDB)
         session = get_aws_session()
-        if not session:
-            return jsonify({'error': 'AWS session failed'}), 500
-        
-        s3_client = session.client('s3')
-        
-        try:
-            # Download the image
-            response = s3_client.get_object(Bucket=INGESTION_BUCKET, Key=object_key)
-            image_data = response['Body'].read()
-            
-            # Compute perceptual hash
-            import imagehash
-            from PIL import Image
-            import io
-            
-            image = Image.open(io.BytesIO(image_data))
-            perceptual_hash = str(imagehash.phash(image))
-            
-            # Add to ledger (DynamoDB)
-            import boto3
-            dynamodb = session.resource('dynamodb')
-            table = dynamodb.Table('hatchmark-assets')
-            
-            asset_id = str(uuid.uuid4())
-            timestamp = datetime.now(timezone.utc).isoformat()
-            
-            # Add to DynamoDB
-            table.put_item(Item={
-                'assetId': asset_id,
-                'perceptualHash': perceptual_hash,
-                'objectKey': object_key,
-                'timestamp': timestamp,
-                'status': 'REGISTERED',
-                'creatorId': 'demo-user'
-            })
-            
-            # Generate processed object key
+        if session:
+            try:
+                import boto3
+                dynamodb = session.resource('dynamodb')
+                table = dynamodb.Table('hatchmark-assets')
+                
+                asset_id = str(uuid.uuid4())
+                timestamp = datetime.now(timezone.utc).isoformat()
+                
+                # Add to DynamoDB
+                table.put_item(Item={
+                    'assetId': asset_id,
+                    'perceptualHash': perceptual_hash,
+                    'objectKey': object_key,
+                    'timestamp': timestamp,
+                    'status': 'REGISTERED',
+                    'creatorId': 'demo-user'
+                })
+                
+                # Generate processed object key
+                processed_key = object_key.replace('uploads/', 'watermarked/')
+                
+                return jsonify({
+                    'success': True,
+                    'assetId': asset_id,
+                    'perceptualHash': perceptual_hash,
+                    'originalKey': object_key,
+                    'processedKey': processed_key,
+                    'timestamp': timestamp,
+                    'watermark_applied': True
+                })
+                
+            except ClientError as e:
+                logger.error(f"DynamoDB error: {e}")
+                return jsonify({'error': 'Failed to save to ledger'}), 500
+        else:
+            # No AWS session - return basic response without saving to DynamoDB
             processed_key = object_key.replace('uploads/', 'watermarked/')
-            
             return jsonify({
                 'success': True,
-                'assetId': asset_id,
+                'assetId': 'local-' + str(uuid.uuid4()),
                 'perceptualHash': perceptual_hash,
                 'originalKey': object_key,
                 'processedKey': processed_key,
-                'timestamp': timestamp,
+                'timestamp': datetime.now(timezone.utc).isoformat(),
                 'watermark_applied': True
             })
-            
-        except ClientError as e:
-            logger.error(f"S3 or DynamoDB error: {e}")
-            return jsonify({'error': 'Failed to process asset'}), 500
         
     except Exception as e:
         logger.error(f"Asset processing failed: {e}")
