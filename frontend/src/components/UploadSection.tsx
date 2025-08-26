@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Upload, FileImage, CheckCircle, AlertCircle, Shield, Download, User, Mail } from "lucide-react";
+import QRCode from 'qrcode';
 
 interface UploadResult {
   uploadId: string;
@@ -179,8 +180,26 @@ const UploadSection = () => {
     }
   };
 
-  const generateCertificate = () => {
+  const generateCertificate = async () => {
     if (!uploadResult || !file) return;
+
+    // Generate QR code for verification URL
+    const verificationUrl = `http://localhost:8080/app/verify?assetId=${uploadResult.assetId}`;
+    let qrCodeDataUrl = '';
+    
+    try {
+      qrCodeDataUrl = await QRCode.toDataURL(verificationUrl, {
+        width: 150,
+        margin: 2,
+        color: {
+          dark: '#1e40af', // Blue color to match theme
+          light: '#ffffff'
+        }
+      });
+    } catch (error) {
+      console.error('Failed to generate QR code:', error);
+      qrCodeDataUrl = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iI2Y5ZmFmYiIgc3Ryb2tlPSIjZDFkNWRiIiBzdHJva2Utd2lkdGg9IjIiLz48dGV4dCB4PSI1MCIgeT0iNTUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxMiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0iIzZiNzI4MCI+UVIgQ29kZTwvdGV4dD48L3N2Zz4=';
+    }
 
     const certificateHTML = `
 <!DOCTYPE html>
@@ -287,20 +306,6 @@ const UploadSection = () => {
       border-radius: 12px;
       border: 1px solid hsl(214.3 31.8% 91.4%);
     }
-    .qr-placeholder {
-      width: 120px;
-      height: 120px;
-      background: hsl(0 0% 100%);
-      border: 2px dashed hsl(214.3 31.8% 91.4%);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin: 0 auto 1rem;
-      border-radius: 8px;
-      color: hsl(215.4 16.3% 46.9%);
-      font-size: 0.8rem;
-      font-weight: 500;
-    }
     @media print {
       body { 
         background: white; 
@@ -373,10 +378,8 @@ const UploadSection = () => {
     </div>
     
     <div class="qr-section">
-      <div class="qr-placeholder">
-        QR Code
-      </div>
-      <p style="font-size: 0.9rem; color: hsl(215.4 16.3% 46.9%); margin: 0;">
+      <img src="${qrCodeDataUrl}" alt="QR Code for verification" style="width: 150px; height: 150px; margin: 0 auto; display: block; border-radius: 8px;" />
+      <p style="font-size: 0.9rem; color: hsl(215.4 16.3% 46.9%); margin: 1rem 0 0 0;">
         Scan to verify authenticity online
       </p>
     </div>
