@@ -128,66 +128,152 @@ def get_upload_status(upload_id):
     
     return jsonify(mock_uploads[upload_id])
 
-@app.route('/verify', methods=['POST'])
+@app.route('/verify', methods=['GET', 'POST'])
 def verify_asset():
     """Verify asset authenticity"""
     try:
-        data = request.get_json()
-        if not data:
-            return jsonify({'error': 'JSON data required'}), 400
-        
-        # Handle different verification methods
-        if 'hash' in data:
-            # Verify by hash
-            asset_hash = data['hash']
+        if request.method == 'GET':
+            # Handle search by asset ID
+            asset_id = request.args.get('assetId')
+            if not asset_id:
+                return jsonify({'error': 'assetId parameter required'}), 400
             
-            # Mock verification logic
-            if asset_hash in mock_assets:
-                asset = mock_assets[asset_hash]
-                return jsonify({
-                    'verified': True,
-                    'asset': asset,
-                    'verification_time': datetime.now(timezone.utc).isoformat()
-                })
-            else:
-                return jsonify({
-                    'verified': False,
-                    'message': 'Asset not found in registry',
-                    'verification_time': datetime.now(timezone.utc).isoformat()
-                })
-        
-        elif 'objectKey' in data:
-            # Verify by object key
-            object_key = data['objectKey']
+            # Search in mock assets
+            for asset_hash, asset in mock_assets.items():
+                if asset.get('assetId') == asset_id or asset.get('filename', '').lower().find(asset_id.lower()) >= 0:
+                    return jsonify({
+                        'assetId': asset['assetId'],
+                        'filename': asset.get('filename', 'unknown.jpg'),
+                        'status': 'verified',
+                        'confidence': 95,
+                        'timestamp': asset['timestamp'],
+                        'originalHash': asset['perceptualHash'],
+                        'creator': asset.get('creator', 'anonymous')
+                    })
             
-            # Generate mock hash for demonstration
-            mock_hash = f"hash_{hash(object_key) % 1000000:06d}"
-            
-            # Create mock asset record
-            asset_id = str(uuid.uuid4())
-            asset_record = {
-                'assetId': asset_id,
-                'perceptualHash': mock_hash,
-                'objectKey': object_key,
-                'status': 'verified',
-                'timestamp': datetime.now(timezone.utc).isoformat(),
-                'metadata': {
-                    'source': 'local_dev',
-                    'verification_method': 'object_key'
-                }
-            }
-            
-            # Store in mock registry
-            mock_assets[mock_hash] = asset_record
-            
+            # If not found, return mock result
             return jsonify({
-                'verified': True,
-                'asset': asset_record,
-                'verification_time': datetime.now(timezone.utc).isoformat()
+                'assetId': asset_id,
+                'filename': f'sample-{asset_id}.jpg',
+                'status': 'verified',
+                'confidence': 95,
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'originalHash': f'hash_{hash(asset_id) % 1000000:06d}',
+                'creator': 'john.doe@example.com'
             })
         
-        else:
-            return jsonify({'error': 'hash or objectKey required'}), 400
+        elif request.method == 'POST':
+            # Handle file upload verification
+            if 'file' in request.files:
+                # File upload verification
+                file = request.files['file']
+                if file.filename == '':
+                    return jsonify({'error': 'No file selected'}), 400
+                
+                if file and file.content_type.startswith('image/'):
+                    # Read file for processing
+                    file_content = file.read()
+                    file_size = len(file_content)
+                    
+                    # Mock hash generation based on file content
+                    import hashlib
+                    file_hash = hashlib.md5(file_content).hexdigest()[:12]
+                    
+                    # Check if file exists in our mock registry
+                    found_asset = None
+                    for asset_hash, asset in mock_assets.items():
+                        if asset.get('filename') == file.filename:
+                            found_asset = asset
+                            break
+                    
+                    if found_asset:
+                        # File found in registry
+                        return jsonify({
+                            'assetId': found_asset['assetId'],
+                            'filename': file.filename,
+                            'status': 'verified',
+                            'confidence': 98,
+                            'timestamp': found_asset['timestamp'],
+                            'originalHash': found_asset['perceptualHash'],
+                            'currentHash': file_hash,
+                            'creator': found_asset.get('creator', 'anonymous')
+                        })
+                    else:
+                        # File not in registry - simulate result
+                        status = 'verified' if hash(file.filename) % 3 != 0 else 'modified'
+                        confidence = 85 if status == 'verified' else 65
+                        
+                        return jsonify({
+                            'assetId': f'asset_{int(time.time())}',
+                            'filename': file.filename,
+                            'status': status,
+                            'confidence': confidence,
+                            'timestamp': datetime.now(timezone.utc).isoformat(),
+                            'originalHash': f'original_{file_hash}',
+                            'currentHash': file_hash,
+                            'creator': 'unknown'
+                        })
+                else:
+                    return jsonify({'error': 'Please upload an image file'}), 400
+            
+            else:
+                # JSON verification (legacy support)
+                data = request.get_json()
+                if not data:
+                    return jsonify({'error': 'JSON data or file required'}), 400
+                
+                # Handle different verification methods
+                if 'hash' in data:
+                    # Verify by hash
+                    asset_hash = data['hash']
+                    
+                    # Mock verification logic
+                    if asset_hash in mock_assets:
+                        asset = mock_assets[asset_hash]
+                        return jsonify({
+                            'verified': True,
+                            'asset': asset,
+                            'verification_time': datetime.now(timezone.utc).isoformat()
+                        })
+                    else:
+                        return jsonify({
+                            'verified': False,
+                            'message': 'Asset not found in registry',
+                            'verification_time': datetime.now(timezone.utc).isoformat()
+                        })
+                
+                elif 'objectKey' in data:
+                    # Verify by object key
+                    object_key = data['objectKey']
+                    
+                    # Generate mock hash for demonstration
+                    mock_hash = f"hash_{hash(object_key) % 1000000:06d}"
+                    
+                    # Create mock asset record
+                    asset_id = str(uuid.uuid4())
+                    asset_record = {
+                        'assetId': asset_id,
+                        'perceptualHash': mock_hash,
+                        'objectKey': object_key,
+                        'status': 'verified',
+                        'timestamp': datetime.now(timezone.utc).isoformat(),
+                        'metadata': {
+                            'source': 'local_dev',
+                            'verification_method': 'object_key'
+                        }
+                    }
+                    
+                    # Store in mock registry
+                    mock_assets[mock_hash] = asset_record
+                    
+                    return jsonify({
+                        'verified': True,
+                        'asset': asset_record,
+                        'verification_time': datetime.now(timezone.utc).isoformat()
+                    })
+                
+                else:
+                    return jsonify({'error': 'hash or objectKey required'}), 400
             
     except Exception as e:
         logger.error(f"Verification failed: {e}")
