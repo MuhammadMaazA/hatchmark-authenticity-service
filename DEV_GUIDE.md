@@ -33,11 +33,11 @@ npm run dev
 - `./stop-dev.sh` - Stop all development servers
 
 ## Features
-✅ Real AWS S3 integration 
-✅ Live certificate generation  
-✅ Dual-mode verification (search + upload)  
-✅ Professional UI with drag-and-drop upload  
-✅ Real-time error handling  
+Real AWS S3 integration 
+Live certificate generation  
+Dual-mode verification (search + upload)  
+Professional UI with drag-and-drop upload  
+Real-time error handling  
 
 ## Troubleshooting
 If you get "port already in use" errors:

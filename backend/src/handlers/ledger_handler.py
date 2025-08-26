@@ -1,159 +1,172 @@
-"""
-Lambda function to write registration data to QLDB ledger.
-Part of the Hatchmark Digital Authenticity Service.
-"""
-
 import boto3
 import json
 import os
 import logging
-from datetime import datetime
-from aws_lambda_powertools import Logger
+from datetime import datetime, timezone
+import uuid
 from botocore.exceptions import ClientError
+from aws_lambda_powertools import Logger, Tracer, Metrics
+from aws_lambda_powertools.metrics import MetricUnit
 
-# Initialize powertools logger
+# Initialize AWS Lambda Powertools
 logger = Logger()
+tracer = Tracer()
+metrics = Metrics()
 
-# Environment variables
-LEDGER_NAME = os.environ.get('QLDB_LEDGER_NAME', 'hatchmark-ledger')
+# Initialize boto3 client
+dynamodb = boto3.resource('dynamodb')
 
-@logger.inject_lambda_context
+@tracer.capture_lambda_handler
+@metrics.log_metrics(capture_cold_start_metric=True)
 def lambda_handler(event, context):
     """
-    AWS Lambda handler for writing registration data to QLDB ledger.
+    Record asset information to DynamoDB ledger
     
-    Expected input:
+    Input: Hash computation result from previous step
     {
-        "bucketName": "hatchmark-ingestion-bucket-...",
-        "objectKey": "uploads/uuid/filename.jpg",
         "perceptualHash": "a78fd4e2c1b89e3f",
-        "timestamp": "2025-08-23T00:00:00Z",
-        "imageWidth": 1920,
-        "imageHeight": 1080,
-        "imageFormat": "JPEG",
-        "algorithm": "pHash"
+        "objectKey": "uploads/uuid/filename.jpg",
+        "bucket": "bucket-name",
+        "imageMetadata": {...}
     }
     
     Returns:
     {
-        "documentId": "...",
-        "transactionId": "...",
-        "status": "REGISTERED"
+        "assetId": "uuid-v4-string",
+        "perceptualHash": "a78fd4e2c1b89e3f",
+        "status": "REGISTERED",
+        "timestamp": "2024-01-15T10:30:00Z"
     }
     """
     
     try:
         logger.info(f"Received event: {json.dumps(event)}")
         
-        # Extract required fields from event
-        bucket_name = event.get('bucketName')
-        object_key = event.get('objectKey')
+        # Get table name from environment
+        table_name = os.environ.get('DYNAMODB_TABLE', 'hatchmark-assets')
+        table = dynamodb.Table(table_name)
+        
+        # Extract required data from event
         perceptual_hash = event.get('perceptualHash')
-        timestamp = event.get('timestamp')
+        object_key = event.get('objectKey')
+        bucket_name = event.get('bucket')
+        image_metadata = event.get('imageMetadata', {})
+        additional_hashes = event.get('additionalHashes', {})
         
-        # Validate required fields
-        if not all([bucket_name, object_key, perceptual_hash, timestamp]):
-            error_msg = "Missing required fields: bucketName, objectKey, perceptualHash, timestamp"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
+        if not perceptual_hash or not object_key:
+            logger.error("Missing required fields: perceptualHash or objectKey")
+            raise ValueError("perceptualHash and objectKey are required")
         
-        # Extract original filename from object key
-        original_filename = object_key.split('/')[-1]
+        # Extract asset ID from object key (uploads/{uuid}/{filename})
+        try:
+            asset_id = object_key.split('/')[1]
+            original_filename = object_key.split('/')[-1]
+        except IndexError:
+            logger.warning(f"Could not extract asset ID from object key: {object_key}")
+            asset_id = str(uuid.uuid4())
+            original_filename = object_key.split('/')[-1] if '/' in object_key else object_key
         
-        # Prepare registration record
-        registration_data = {
-            'timestamp': timestamp,
+        # Check for duplicate using perceptual hash
+        try:
+            response = table.query(
+                IndexName='PerceptualHashIndex',
+                KeyConditionExpression='perceptualHash = :hash',
+                ExpressionAttributeValues={':hash': perceptual_hash}
+            )
+            
+            if response['Items']:
+                logger.warning(f"Duplicate image detected with hash: {perceptual_hash}")
+                existing_item = response['Items'][0]
+                
+                # Return existing asset information
+                return {
+                    "assetId": existing_item['assetId'],
+                    "perceptualHash": perceptual_hash,
+                    "status": "DUPLICATE_DETECTED",
+                    "timestamp": existing_item['timestamp'],
+                    "originalAssetId": existing_item['assetId'],
+                    "isDuplicate": True
+                }
+                
+        except ClientError as e:
+            logger.error(f"Error checking for duplicates: {str(e)}")
+            # Continue with registration even if duplicate check fails
+        
+        # Create timestamp
+        timestamp = datetime.now(timezone.utc).isoformat()
+        
+        # Prepare item for DynamoDB
+        item = {
+            'assetId': asset_id,
             'perceptualHash': perceptual_hash,
-            'algorithm': event.get('algorithm', 'pHash'),
-            'originalFilename': original_filename,
-            's3IngestionKey': object_key,
-            's3IngestionBucket': bucket_name,
-            'imageWidth': event.get('imageWidth'),
-            'imageHeight': event.get('imageHeight'),
-            'imageFormat': event.get('imageFormat'),
+            'timestamp': timestamp,
             'status': 'REGISTERED',
-            'creatorId': 'anonymous',  # TODO: Replace with actual user ID when auth is implemented
-            'createdAt': datetime.utcnow().isoformat() + 'Z'
+            'originalFilename': original_filename,
+            's3Key': object_key,
+            'bucket': bucket_name,
+            'metadata': {
+                'fileSize': image_metadata.get('size', 0),
+                'dimensions': {
+                    'width': image_metadata.get('width', 0),
+                    'height': image_metadata.get('height', 0)
+                },
+                'format': image_metadata.get('format', 'UNKNOWN'),
+                'mode': image_metadata.get('mode', 'UNKNOWN')
+            },
+            'additionalHashes': additional_hashes
         }
         
-        logger.info(f"Preparing to register data: {json.dumps(registration_data, default=str)}")
+        logger.info(f"Recording asset to ledger: {asset_id}")
         
-        # Write to QLDB using the Python driver
+        # Write to DynamoDB with condition to prevent overwrites
         try:
-            from pyqldb.driver.qldb_driver import QldbDriver
+            table.put_item(
+                Item=item,
+                ConditionExpression='attribute_not_exists(assetId)'
+            )
             
-            driver = QldbDriver(LEDGER_NAME)
+            metrics.add_metric(name="AssetRegistered", unit=MetricUnit.Count, value=1)
+            logger.info(f"Successfully recorded asset {asset_id} to ledger")
             
-            def insert_registration(txn):
-                """Execute the insert statement within a transaction."""
-                statement = "INSERT INTO registrations ?"
-                cursor = txn.execute_statement(statement, registration_data)
-                
-                # Get the document metadata (including document ID)
-                result_list = list(cursor)
-                if result_list:
-                    document_metadata = result_list[0]
-                    logger.info(f"Inserted document with metadata: {document_metadata}")
-                    return document_metadata
-                else:
-                    raise ValueError("No result returned from insert operation")
-            
-            # Execute the transaction
-            result = driver.execute_lambda(insert_registration)
-            driver.close()
-            
-            # Extract document ID from result
-            document_id = None
-            if isinstance(result, dict) and 'documentId' in result:
-                document_id = result['documentId']
-            elif isinstance(result, dict) and 'metadata' in result:
-                document_id = result['metadata'].get('id')
-            
-            if not document_id:
-                # Generate a fallback ID
-                import uuid
-                document_id = str(uuid.uuid4())
-                logger.warning(f"Could not extract document ID from QLDB result, using fallback: {document_id}")
-            
-            logger.info(f"Successfully registered document with ID: {document_id}")
-            
-            # Prepare response
-            response = {
-                'documentId': document_id,
-                'transactionId': document_id,  # Using document ID as transaction ID for simplicity
-                'status': 'REGISTERED',
-                'timestamp': registration_data['timestamp'],
-                'perceptualHash': perceptual_hash,
-                'ledgerName': LEDGER_NAME
-            }
-            
-            return response
-            
-        except ImportError as e:
-            logger.error(f"pyqldb library not available: {e}")
-            # Fallback: simulate successful registration for development
-            import uuid
-            fallback_doc_id = str(uuid.uuid4())
-            logger.warning(f"Using fallback document ID for development: {fallback_doc_id}")
-            
-            return {
-                'documentId': fallback_doc_id,
-                'transactionId': fallback_doc_id,
-                'status': 'REGISTERED',
-                'timestamp': registration_data['timestamp'],
-                'perceptualHash': perceptual_hash,
-                'ledgerName': LEDGER_NAME,
-                'note': 'Fallback mode - pyqldb not available'
-            }
-            
-    except ClientError as e:
-        logger.error(f"AWS client error: {e}")
-        error_code = e.response['Error']['Code']
-        if error_code == 'ResourceNotFoundException':
-            raise ValueError(f"QLDB ledger '{LEDGER_NAME}' not found")
-        else:
-            raise
-    
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+                logger.warning(f"Asset {asset_id} already exists in ledger")
+                # Fetch existing item
+                response = table.get_item(Key={'assetId': asset_id})
+                if 'Item' in response:
+                    existing_item = response['Item']
+                    return {
+                        "assetId": asset_id,
+                        "perceptualHash": existing_item['perceptualHash'],
+                        "status": "ALREADY_EXISTS",
+                        "timestamp": existing_item['timestamp'],
+                        "isDuplicate": False
+                    }
+            else:
+                logger.error(f"DynamoDB error: {str(e)}")
+                metrics.add_metric(name="LedgerWriteError", unit=MetricUnit.Count, value=1)
+                raise
+        
+        # Prepare response
+        result = {
+            "assetId": asset_id,
+            "perceptualHash": perceptual_hash,
+            "status": "REGISTERED",
+            "timestamp": timestamp,
+            "s3Key": object_key,
+            "isDuplicate": False
+        }
+        
+        logger.info(f"Asset registration completed: {asset_id}")
+        
+        return result
+        
+    except ValueError as e:
+        logger.warning(f"Validation error: {str(e)}")
+        metrics.add_metric(name="LedgerValidationError", unit=MetricUnit.Count, value=1)
+        raise e
+        
     except Exception as e:
-        logger.error(f"Unexpected error in ledger function: {e}")
-        raise
+        logger.error(f"Unexpected error in ledger recording: {str(e)}")
+        metrics.add_metric(name="LedgerUnexpectedError", unit=MetricUnit.Count, value=1)
+        raise e

@@ -70,7 +70,7 @@ const VerificationSection = () => {
       const formData = new FormData();
       formData.append('file', file);
 
-      const response = await fetch('/api/verify', {
+      const response = await fetch('http://localhost:3002/verify', {
         method: 'POST',
         body: formData,
       });
@@ -100,7 +100,7 @@ const VerificationSection = () => {
     setVerificationResult(null);
 
     try {
-      const response = await fetch(`/api/verify?assetId=${encodeURIComponent(searchQuery)}`, {
+      const response = await fetch(`http://localhost:3002/verify?assetId=${encodeURIComponent(searchQuery)}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -285,7 +285,11 @@ const VerificationSection = () => {
                   </Badge>
                 </CardTitle>
                 <CardDescription>
-                  Asset verification completed with {verificationResult.confidence}% confidence
+                  {verificationResult.status === 'verified' 
+                    ? 'Asset authenticity has been verified'
+                    : verificationResult.status === 'modified'
+                    ? 'Asset appears to have been modified'
+                    : 'Asset not found in our database'}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -308,14 +312,16 @@ const VerificationSection = () => {
                       <p className="font-mono text-sm bg-muted p-2 rounded">{verificationResult.currentHash}</p>
                     </div>
                   )}
-                  <div>
-                    <h4 className="font-medium text-sm text-muted-foreground mb-1">Registered</h4>
-                    <p className="text-sm flex items-center gap-2">
-                      <Clock className="w-4 h-4" />
-                      {new Date(verificationResult.timestamp).toLocaleString()}
-                    </p>
-                  </div>
-                  {verificationResult.creator && (
+                  {verificationResult.status === 'verified' && (
+                    <div>
+                      <h4 className="font-medium text-sm text-muted-foreground mb-1">Registered</h4>
+                      <p className="text-sm flex items-center gap-2">
+                        <Clock className="w-4 h-4" />
+                        {new Date(verificationResult.timestamp).toLocaleString()}
+                      </p>
+                    </div>
+                  )}
+                  {verificationResult.creator && verificationResult.status === 'verified' && (
                     <div>
                       <h4 className="font-medium text-sm text-muted-foreground mb-1">Creator</h4>
                       <p className="text-sm">{verificationResult.creator}</p>

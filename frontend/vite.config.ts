@@ -8,7 +8,7 @@ export default defineConfig({
     port: 8080,
     proxy: {
       '/api': {
-        target: process.env.VITE_API_URL || 'http://localhost:3002',
+        target: process.env.VITE_API_URL || 'http://localhost:3003',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, '')
       }

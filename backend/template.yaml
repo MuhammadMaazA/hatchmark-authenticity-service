@@ -78,14 +78,7 @@ Resources:
                 Action:
                   - s3:GetObject
                 Resource: !Sub '${HatchmarkIngestionBucket}/*'
-        - PolicyName: StepFunctionsPolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - states:StartExecution
-                Resource: !Sub '${HatchmarkStepFunction}'
+
   
   HatchmarkLedgerRole:
     Type: AWS::IAM::Role
@@ -194,18 +187,7 @@ Resources:
       Environment:
         Variables:
           LOG_LEVEL: INFO
-          STEP_FUNCTION_ARN: !Ref HatchmarkStepFunction
-      Events:
-        S3Upload:
-          Type: S3
-          Properties:
-            Bucket: !Ref HatchmarkIngestionBucket
-            Events: s3:ObjectCreated:*
-            Filter:
-              S3Key:
-                Rules:
-                  - Name: prefix
-                    Value: uploads/
+
   
   HatchmarkLedgerFunction:
     Type: AWS::Serverless::Function
@@ -213,13 +195,13 @@ Resources:
       FunctionName: hatchmark-ledger-function
       CodeUri: src/handlers/
       Handler: ledger_handler.lambda_handler
-      Description: Write registration data to QLDB ledger
+      Description: Write registration data to DynamoDB ledger
       Timeout: 30
       MemorySize: 256
       Role: !GetAtt HatchmarkLedgerRole.Arn
       Environment:
         Variables:
-          DYNAMODB_TABLE_NAME: hatchmark-assets
+          DYNAMODB_TABLE: hatchmark-assets
           LOG_LEVEL: INFO
   
   HatchmarkVerificationFunction:
@@ -264,15 +246,6 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
-      NotificationConfiguration:
-        LambdaConfigurations:
-          - Event: s3:ObjectCreated:*
-            Function: !GetAtt HatchmarkHashFunction.Arn
-            Filter:
-              S3Key:
-                Rules:
-                  - Name: prefix
-                    Value: uploads/
   
   HatchmarkProcessedBucket:
     Type: AWS::S3::Bucket
@@ -291,15 +264,46 @@ Resources:
               SSEAlgorithm: AES256
   
   # ========================================================================
-  # QLDB LEDGER (COMMENTED OUT - USING DYNAMODB INSTEAD)
+  # DYNAMODB TABLE (REPLACING QLDB)
   # ========================================================================
   
-  # HatchmarkQLDBLedger:
-  #   Type: AWS::QLDB::Ledger
-  #   Properties:
-  #     Name: hatchmark-ledger
-  #     PermissionsMode: STANDARD
-  #     DeletionProtection: true
+  HatchmarkAssetsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: hatchmark-assets
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: assetId
+          AttributeType: S
+        - AttributeName: perceptualHash
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: assetId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: PerceptualHashIndex
+          KeySchema:
+            - AttributeName: perceptualHash
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: TimestampIndex
+          KeySchema:
+            - AttributeName: timestamp
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: Hatchmark
+        - Key: Environment
+          Value: !Ref AWS::StackName
   
   # ========================================================================
   # SQS QUEUE
@@ -309,7 +313,7 @@ Resources:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: hatchmark-watermarking-queue
-      VisibilityTimeoutSeconds: 900  # 15 minutes
+      VisibilityTimeout: 900  # 15 minutes
       MessageRetentionPeriod: 1209600  # 14 days
       ReceiveMessageWaitTimeSeconds: 20  # Long polling
   
@@ -406,7 +410,8 @@ Resources:
                 "QueueUrl": "${HatchmarkWatermarkingQueue}",
                 "MessageBody": {
                   "objectKey.$": "$.hashResult.Payload.objectKey",
-                  "qldbDocumentId.$": "$.ledgerResult.Payload.documentId",
+                  "assetId.$": "$.ledgerResult.Payload.assetId",
+                  "documentId.$": "$.ledgerResult.Payload.documentId",
                   "bucketName.$": "$.hashResult.Payload.bucketName"
                 }
               },

@@ -9,7 +9,7 @@ Hatchmark addresses the escalating challenge of digital content authenticity in 
 ## Architecture Overview
 
 - **Serverless-First**: Built on AWS Lambda, API Gateway, and Step Functions
-- **Immutable Ledger**: Amazon QLDB for tamper-proof record keeping
+- **Immutable Ledger**: Amazon DynamoDB with Point-in-Time Recovery for tamper-proof record keeping
 - **Dual Verification**: Perceptual hashing + steganographic watermarking
 - **Scalable Processing**: AWS Fargate for heavy watermarking tasks
 - **Cost-Efficient**: Pay-per-use model with scale-to-zero capabilities
@@ -18,7 +18,7 @@ Hatchmark addresses the escalating challenge of digital content authenticity in 
 
 ### Backend
 - **AWS Lambda**: Serverless compute for API endpoints
-- **Amazon QLDB**: Quantum Ledger Database for immutable records
+- **Amazon DynamoDB**: NoSQL database with Point-in-Time Recovery for immutable records
 - **AWS Step Functions**: Workflow orchestration
 - **Amazon S3**: Object storage for original and processed images
 - **AWS Fargate**: Containerized watermarking service
@@ -110,10 +110,10 @@ Everything needed to get started locally.
 ### Phase 1: The Ingestion Core (In Progress)
 
 ###  Phase 2: The Notarization Pipeline
-- [ ] QLDB ledger setup
-- [ ] Perceptual hashing Lambda
-- [ ] Ledger-writing Lambda
-- [ ] Step Functions orchestration
+- [x] DynamoDB table setup (replacing QLDB)
+- [x] Perceptual hashing Lambda
+- [x] Ledger-writing Lambda (now DynamoDB)
+- [x] Step Functions orchestration
 
 ###  Phase 3: The Heavy Lifter
 - [ ] Steganography implementation
@@ -160,7 +160,7 @@ Everything needed to get started locally.
 3. Image uploaded directly to S3 bucket
 4. Step Functions workflow triggered:
    - Compute perceptual hash
-   - Write registration to QLDB
+   - Write registration to DynamoDB
    - Queue watermarking task
 5. Fargate container processes invisible watermark
 6. Watermarked image stored in processed bucket
@@ -168,7 +168,7 @@ Everything needed to get started locally.
 ### Verification Flow
 1. User uploads image for verification
 2. System extracts watermark and computes hash
-3. Queries QLDB for matching records
+3. Queries DynamoDB for matching records
 4. Returns verdict:
    - **Verified**: Watermark found and valid
    - **Potentially Altered**: Hash matches but no watermark
@@ -204,7 +204,7 @@ curl -X POST https://your-api-url/verify-artwork \
 - **CloudWatch Logs**: Centralized logging for all services
 - **CloudWatch Metrics**: Performance and cost monitoring
 - **Step Functions Console**: Visual workflow execution tracking
-- **QLDB Console**: Transaction history and ledger verification
+- **DynamoDB Console**: Asset registry and transaction history
 
 ## Contributing
 

@@ -54,8 +54,12 @@ def health_check():
 def initiate_upload():
     """Initiate file upload with presigned URL"""
     try:
+        logger.info(f"Upload initiation request received: {request.method}")
         data = request.get_json()
+        logger.info(f"Request data: {data}")
+        
         if not data or 'filename' not in data:
+            logger.error("Missing filename in request")
             return jsonify({'error': 'filename is required'}), 400
         
         filename = data['filename']
@@ -128,6 +132,62 @@ def get_upload_status(upload_id):
     
     return jsonify(mock_uploads[upload_id])
 
+@app.route('/uploads/complete', methods=['POST'])
+def complete_upload():
+    """Complete file upload and register asset"""
+    try:
+        logger.info("Upload completion request received")
+        data = request.get_json()
+        logger.info(f"Completion data: {data}")
+        
+        if not data or 'uploadId' not in data:
+            return jsonify({'error': 'uploadId is required'}), 400
+            
+        upload_id = data['uploadId']
+        object_key = data.get('objectKey', '')
+        creator = data.get('creator', 'anonymous')
+        email = data.get('email', '')
+        
+        if upload_id not in mock_uploads:
+            return jsonify({'error': 'Upload not found'}), 404
+            
+        # Update upload record
+        mock_uploads[upload_id].update({
+            'status': 'completed',
+            'creator': creator,
+            'email': email,
+            'completedAt': datetime.now(timezone.utc).isoformat()
+        })
+        
+        # Generate asset ID and hash
+        asset_id = f"asset_{int(time.time())}_{upload_id[:8]}"
+        asset_hash = f"hash_{hash(object_key + creator) % 1000000:06d}"
+        
+        # Register in mock assets
+        mock_assets[asset_hash] = {
+            'assetId': asset_id,
+            'filename': mock_uploads[upload_id]['filename'],
+            'perceptualHash': asset_hash,
+            'objectKey': object_key,
+            'creator': creator,
+            'email': email,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'status': 'verified'
+        }
+        
+        logger.info(f"Asset registered: {asset_id}")
+        
+        return jsonify({
+            'assetId': asset_id,
+            'perceptualHash': asset_hash,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'message': 'Upload completed and asset registered'
+        })
+        
+    except Exception as e:
+        logger.error(f"Upload completion failed: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
 @app.route('/verify', methods=['GET', 'POST'])
 def verify_asset():
     """Verify asset authenticity"""
@@ -151,15 +211,15 @@ def verify_asset():
                         'creator': asset.get('creator', 'anonymous')
                     })
             
-            # If not found, return mock result
+            # If not found, return unknown status
             return jsonify({
                 'assetId': asset_id,
-                'filename': f'sample-{asset_id}.jpg',
-                'status': 'verified',
-                'confidence': 95,
-                'timestamp': datetime.now(timezone.utc).isoformat(),
-                'originalHash': f'hash_{hash(asset_id) % 1000000:06d}',
-                'creator': 'john.doe@example.com'
+                'filename': f'search-{asset_id}',
+                'status': 'unknown',
+                'confidence': 0,
+                'timestamp': 'not_found',
+                'originalHash': 'not_found',
+                'creator': 'unknown'
             })
         
         elif request.method == 'POST':
@@ -199,17 +259,14 @@ def verify_asset():
                             'creator': found_asset.get('creator', 'anonymous')
                         })
                     else:
-                        # File not in registry - simulate result
-                        status = 'verified' if hash(file.filename) % 3 != 0 else 'modified'
-                        confidence = 85 if status == 'verified' else 65
-                        
+                        # File not in registry - return unknown status
                         return jsonify({
-                            'assetId': f'asset_{int(time.time())}',
+                            'assetId': 'unknown',
                             'filename': file.filename,
-                            'status': status,
-                            'confidence': confidence,
+                            'status': 'unknown',
+                            'confidence': 0,
                             'timestamp': datetime.now(timezone.utc).isoformat(),
-                            'originalHash': f'original_{file_hash}',
+                            'originalHash': 'not_found',
                             'currentHash': file_hash,
                             'creator': 'unknown'
                         })
@@ -327,7 +384,7 @@ def add_to_ledger():
 
 @app.route('/process', methods=['POST'])
 def process_asset():
-    """Process asset (mock watermarking)"""
+    """Process asset (compute hash and add to ledger)"""
     try:
         data = request.get_json()
         if not data or 'objectKey' not in data:
@@ -335,19 +392,60 @@ def process_asset():
         
         object_key = data['objectKey']
         
-        # Simulate processing time
-        time.sleep(1)
+        # Download image from S3 and compute perceptual hash
+        session = get_aws_session()
+        if not session:
+            return jsonify({'error': 'AWS session failed'}), 500
         
-        # Generate processed object key
-        processed_key = object_key.replace('uploads/', 'watermarked/')
+        s3_client = session.client('s3')
         
-        return jsonify({
-            'success': True,
-            'originalKey': object_key,
-            'processedKey': processed_key,
-            'processing_time': datetime.now(timezone.utc).isoformat(),
-            'watermark_applied': True
-        })
+        try:
+            # Download the image
+            response = s3_client.get_object(Bucket=INGESTION_BUCKET, Key=object_key)
+            image_data = response['Body'].read()
+            
+            # Compute perceptual hash
+            import imagehash
+            from PIL import Image
+            import io
+            
+            image = Image.open(io.BytesIO(image_data))
+            perceptual_hash = str(imagehash.phash(image))
+            
+            # Add to ledger (DynamoDB)
+            import boto3
+            dynamodb = session.resource('dynamodb')
+            table = dynamodb.Table('hatchmark-assets')
+            
+            asset_id = str(uuid.uuid4())
+            timestamp = datetime.now(timezone.utc).isoformat()
+            
+            # Add to DynamoDB
+            table.put_item(Item={
+                'assetId': asset_id,
+                'perceptualHash': perceptual_hash,
+                'objectKey': object_key,
+                'timestamp': timestamp,
+                'status': 'REGISTERED',
+                'creatorId': 'demo-user'
+            })
+            
+            # Generate processed object key
+            processed_key = object_key.replace('uploads/', 'watermarked/')
+            
+            return jsonify({
+                'success': True,
+                'assetId': asset_id,
+                'perceptualHash': perceptual_hash,
+                'originalKey': object_key,
+                'processedKey': processed_key,
+                'timestamp': timestamp,
+                'watermark_applied': True
+            })
+            
+        except ClientError as e:
+            logger.error(f"S3 or DynamoDB error: {e}")
+            return jsonify({'error': 'Failed to process asset'}), 500
         
     except Exception as e:
         logger.error(f"Asset processing failed: {e}")
@@ -359,6 +457,7 @@ if __name__ == '__main__':
     print("Available endpoints:")
     print("  GET  /health")
     print("  POST /uploads/initiate")
+    print("  POST /uploads/complete")
     print("  GET  /upload-status/<id>")
     print("  POST /verify")
     print("  GET  /ledger")

@@ -7,6 +7,6 @@ architecture = "arm64"
 handler = "generate_presigned_url.lambda_handler"
 manifest_hash = ""
 packagetype = "Zip"
-functions = ["HatchmarkGenerateUrlFunction", "HatchmarkVerificationFunction"]
+functions = ["HatchmarkGenerateUrlFunction", "HatchmarkHashFunction", "HatchmarkLedgerFunction", "HatchmarkVerificationFunction"]
 
 [layer_build_definitions]

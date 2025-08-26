@@ -1,128 +1,149 @@
-"""
-Lambda function to compute perceptual hash of uploaded images.
-Part of the Hatchmark Digital Authenticity Service.
-"""
-
 import boto3
 import json
-import io
 import os
 import logging
-from aws_lambda_powertools import Logger
-from botocore.exceptions import ClientError
+import io
+from urllib.parse import unquote_plus
 from PIL import Image
 import imagehash
+from botocore.exceptions import ClientError
+from aws_lambda_powertools import Logger, Tracer, Metrics
+from aws_lambda_powertools.metrics import MetricUnit
 
-# Initialize powertools logger
+# Initialize AWS Lambda Powertools
 logger = Logger()
+tracer = Tracer()
+metrics = Metrics()
 
-# Initialize S3 client
+# Initialize boto3 clients
 s3_client = boto3.client('s3')
 
-@logger.inject_lambda_context
+@tracer.capture_lambda_handler
+@metrics.log_metrics(capture_cold_start_metric=True)
 def lambda_handler(event, context):
     """
-    AWS Lambda handler for computing perceptual hash of uploaded images.
+    Compute perceptual hash of uploaded image
     
-    Expected input from S3 event:
-    {
-        "Records": [
-            {
-                "s3": {
-                    "bucket": {"name": "bucket-name"},
-                    "object": {"key": "uploads/uuid/filename.jpg"}
-                }
-            }
-        ]
-    }
+    Input: S3 event trigger or direct invocation with S3 object details
     
     Returns:
     {
         "perceptualHash": "a78fd4e2c1b89e3f",
-        "bucketName": "bucket-name",
         "objectKey": "uploads/uuid/filename.jpg",
-        "algorithm": "pHash",
-        "timestamp": "2025-08-23T00:00:00Z"
+        "bucket": "bucket-name",
+        "imageMetadata": {
+            "width": 1920,
+            "height": 1080,
+            "format": "JPEG",
+            "mode": "RGB",
+            "size": 1024576
+        }
     }
     """
     
     try:
-        # Parse S3 event record
-        if 'Records' not in event or not event['Records']:
-            logger.error("No S3 records found in event")
-            raise ValueError("Invalid S3 event format")
+        logger.info(f"Received event: {json.dumps(event)}")
         
-        s3_record = event['Records'][0]['s3']
-        bucket_name = s3_record['bucket']['name']
-        object_key = s3_record['object']['key']
+        # Parse S3 event - handle both S3 event and direct invocation
+        if 'Records' in event:
+            # S3 event trigger
+            record = event['Records'][0]
+            bucket_name = record['s3']['bucket']['name']
+            object_key = unquote_plus(record['s3']['object']['key'])
+        else:
+            # Direct invocation
+            bucket_name = event.get('bucket')
+            object_key = event.get('objectKey')
+        
+        if not bucket_name or not object_key:
+            logger.error("Missing bucket name or object key in event")
+            raise ValueError("Bucket name and object key are required")
         
         logger.info(f"Processing image: s3://{bucket_name}/{object_key}")
         
-        # Download the image from S3
+        # Download image from S3 into memory
         try:
             response = s3_client.get_object(Bucket=bucket_name, Key=object_key)
             image_data = response['Body'].read()
-            logger.info(f"Downloaded {len(image_data)} bytes from S3")
+            
+            # Get file size
+            file_size = len(image_data)
+            logger.info(f"Downloaded image size: {file_size} bytes")
+            
         except ClientError as e:
-            logger.error(f"Failed to download image from S3: {e}")
-            raise
+            if e.response['Error']['Code'] == 'NoSuchKey':
+                logger.error(f"Object not found: s3://{bucket_name}/{object_key}")
+                raise ValueError(f"File not found: {object_key}")
+            else:
+                logger.error(f"Failed to download object: {str(e)}")
+                raise
         
-        # Load image into PIL
+        # Open image with PIL
         try:
-            image = Image.open(io.BytesIO(image_data))
-            logger.info(f"Image loaded: {image.format}, Size: {image.size}, Mode: {image.mode}")
+            image_buffer = io.BytesIO(image_data)
+            image = Image.open(image_buffer)
+            
+            # Get image metadata
+            image_metadata = {
+                "width": image.width,
+                "height": image.height,
+                "format": image.format,
+                "mode": image.mode,
+                "size": file_size
+            }
+            
+            logger.info(f"Image metadata: {image_metadata}")
+            
+            # Convert to RGB if necessary (for consistent hashing)
+            if image.mode != 'RGB':
+                logger.info(f"Converting image from {image.mode} to RGB")
+                image = image.convert('RGB')
+            
         except Exception as e:
-            logger.error(f"Failed to load image with PIL: {e}")
-            raise ValueError(f"Invalid image format: {e}")
+            logger.error(f"Failed to process image: {str(e)}")
+            raise ValueError(f"Invalid image file: {str(e)}")
         
-        # Convert to RGB if necessary (required for perceptual hashing)
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
-            logger.info("Converted image to RGB mode")
-        
-        # Compute perceptual hash using pHash algorithm
+        # Compute perceptual hash using imagehash
         try:
-            phash = imagehash.phash(image)
-            perceptual_hash = str(phash)
-            logger.info(f"Computed perceptual hash: {perceptual_hash}")
+            # Use phash (perceptual hash) - most robust for duplicate detection
+            phash = imagehash.phash(image, hash_size=16)  # 256-bit hash
+            phash_string = str(phash)
+            
+            logger.info(f"Computed perceptual hash: {phash_string}")
+            
+            # Also compute additional hashes for comparison
+            ahash = str(imagehash.average_hash(image, hash_size=16))
+            dhash = str(imagehash.dhash(image, hash_size=16))
+            
+            metrics.add_metric(name="ImageHashComputed", unit=MetricUnit.Count, value=1)
+            
         except Exception as e:
-            logger.error(f"Failed to compute perceptual hash: {e}")
-            raise
+            logger.error(f"Failed to compute hash: {str(e)}")
+            metrics.add_metric(name="ImageHashError", unit=MetricUnit.Count, value=1)
+            raise ValueError(f"Failed to compute image hash: {str(e)}")
         
         # Prepare response
-        from datetime import datetime
         result = {
-            "perceptualHash": perceptual_hash,
-            "bucketName": bucket_name,
+            "perceptualHash": phash_string,
             "objectKey": object_key,
-            "algorithm": "pHash",
-            "timestamp": datetime.utcnow().isoformat() + "Z",
-            "imageWidth": image.width,
-            "imageHeight": image.height,
-            "imageFormat": image.format or "Unknown"
+            "bucket": bucket_name,
+            "imageMetadata": image_metadata,
+            "additionalHashes": {
+                "averageHash": ahash,
+                "differenceHash": dhash
+            }
         }
         
-        logger.info(f"Successfully processed image hash: {perceptual_hash}")
-        
-        # Trigger Step Functions workflow
-        step_function_arn = os.environ.get('STEP_FUNCTION_ARN')
-        if step_function_arn:
-            try:
-                stepfunctions_client = boto3.client('stepfunctions')
-                stepfunctions_client.start_execution(
-                    stateMachineArn=step_function_arn,
-                    input=json.dumps(result)
-                )
-                logger.info("Successfully started Step Functions execution")
-            except Exception as e:
-                logger.error(f"Failed to start Step Functions execution: {e}")
-                # Don't fail the whole function if Step Functions fails
+        logger.info(f"Hash computation completed successfully for {object_key}")
         
         return result
         
-    except ClientError as e:
-        logger.error(f"AWS client error: {e}")
-        raise
+    except ValueError as e:
+        logger.warning(f"Validation error: {str(e)}")
+        metrics.add_metric(name="HashValidationError", unit=MetricUnit.Count, value=1)
+        raise e
+        
     except Exception as e:
-        logger.error(f"Unexpected error in hash function: {e}")
-        raise
+        logger.error(f"Unexpected error in hash computation: {str(e)}")
+        metrics.add_metric(name="HashUnexpectedError", unit=MetricUnit.Count, value=1)
+        raise e

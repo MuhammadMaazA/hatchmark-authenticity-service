@@ -145,7 +145,7 @@ def test_frontend():
     """Test frontend accessibility"""
     print("Testing frontend...")
     try:
-        response = requests.get('http://localhost:8081')
+        response = requests.get('http://localhost:8080')
         if response.status_code == 200:
             print("Frontend accessible")
             return True

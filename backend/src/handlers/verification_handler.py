@@ -1,299 +1,298 @@
-"""
-Lambda function to verify artwork authenticity.
-Part of the Hatchmark Digital Authenticity Service.
-"""
-
 import boto3
 import json
 import os
-import io
-import base64
 import logging
-from aws_lambda_powertools import Logger
-from botocore.exceptions import ClientError
+import io
 from PIL import Image
 import imagehash
+from botocore.exceptions import ClientError
+from aws_lambda_powertools import Logger, Tracer, Metrics
+from aws_lambda_powertools.metrics import MetricUnit
 
-# Initialize powertools logger
+# Initialize AWS Lambda Powertools
 logger = Logger()
+tracer = Tracer()
+metrics = Metrics()
 
-# Environment variables
-LEDGER_NAME = os.environ.get('QLDB_LEDGER_NAME', 'hatchmark-ledger')
-PROCESSED_BUCKET = os.environ.get('PROCESSED_BUCKET')
-
-# Initialize clients
+# Initialize boto3 clients
+dynamodb = boto3.resource('dynamodb')
 s3_client = boto3.client('s3')
 
-@logger.inject_lambda_context
+@tracer.capture_lambda_handler
+@metrics.log_metrics(capture_cold_start_metric=True)
 def lambda_handler(event, context):
     """
-    AWS Lambda handler for verifying artwork authenticity.
+    Verify authenticity of an uploaded image by checking against the ledger
     
     Expected input:
     {
-        "body": base64-encoded-image-data,
-        "headers": {
-            "content-type": "image/jpeg"
-        }
+        "body": "{\"imageData\": \"base64-encoded-image\"}"
     }
     
-    OR for multipart form data:
+    OR via S3:
     {
-        "body": "multipart-form-data",
-        "isBase64Encoded": true,
-        "headers": {
-            "content-type": "multipart/form-data; boundary=..."
-        }
+        "body": "{\"s3Bucket\": \"bucket\", \"s3Key\": \"key\"}"
     }
     
     Returns:
     {
-        "verdict": "VERIFIED" | "POTENTIALLY_ALTERED" | "NOT_REGISTERED",
-        "confidence": 0.95,
-        "details": {
-            "watermarkFound": true,
-            "hashMatch": true,
-            "registrationDate": "2025-08-23T00:00:00Z",
-            "documentId": "..."
-        }
+        "statusCode": 200,
+        "body": "{
+            \"isAuthentic\": true/false,
+            \"confidence\": 0.95,
+            \"assetId\": \"uuid\",
+            \"registrationDate\": \"2024-01-15T10:30:00Z\",
+            \"details\": {...}
+        }"
     }
     """
     
+    # CORS headers
+    cors_headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Content-Type": "application/json"
+    }
+    
     try:
-        logger.info("Processing verification request")
+        # Handle CORS preflight
+        if event.get('httpMethod') == 'OPTIONS':
+            return {
+                "statusCode": 200,
+                "headers": cors_headers,
+                "body": ""
+            }
         
-        # Parse the uploaded image
-        image = _extract_image_from_event(event)
+        # Parse request body
+        if not event.get('body'):
+            return {
+                "statusCode": 400,
+                "headers": cors_headers,
+                "body": json.dumps({
+                    "error": "Bad Request",
+                    "message": "Request body is required"
+                })
+            }
+        
+        try:
+            body = json.loads(event['body'])
+        except json.JSONDecodeError:
+            return {
+                "statusCode": 400,
+                "headers": cors_headers,
+                "body": json.dumps({
+                    "error": "Bad Request",
+                    "message": "Invalid JSON format"
+                })
+            }
+        
+        # Get DynamoDB table
+        table_name = os.environ.get('DYNAMODB_TABLE', 'hatchmark-assets')
+        table = dynamodb.Table(table_name)
+        
+        # Load image from different sources
+        image = None
+        image_source = "unknown"
+        
+        if 'imageData' in body:
+            # Base64 encoded image
+            import base64
+            try:
+                image_data = base64.b64decode(body['imageData'])
+                image = Image.open(io.BytesIO(image_data))
+                image_source = "base64"
+            except Exception as e:
+                logger.error(f"Failed to decode base64 image: {str(e)}")
+                return {
+                    "statusCode": 400,
+                    "headers": cors_headers,
+                    "body": json.dumps({
+                        "error": "Bad Request",
+                        "message": "Invalid base64 image data"
+                    })
+                }
+        
+        elif 's3Bucket' in body and 's3Key' in body:
+            # S3 object
+            try:
+                response = s3_client.get_object(Bucket=body['s3Bucket'], Key=body['s3Key'])
+                image_data = response['Body'].read()
+                image = Image.open(io.BytesIO(image_data))
+                image_source = f"s3://{body['s3Bucket']}/{body['s3Key']}"
+            except Exception as e:
+                logger.error(f"Failed to load S3 image: {str(e)}")
+                return {
+                    "statusCode": 400,
+                    "headers": cors_headers,
+                    "body": json.dumps({
+                        "error": "Bad Request",
+                        "message": "Failed to load image from S3"
+                    })
+                }
+        
+        else:
+            return {
+                "statusCode": 400,
+                "headers": cors_headers,
+                "body": json.dumps({
+                    "error": "Bad Request",
+                    "message": "Either imageData (base64) or s3Bucket+s3Key must be provided"
+                })
+            }
+        
         if not image:
-            return _error_response(400, "No valid image found in request")
+            return {
+                "statusCode": 400,
+                "headers": cors_headers,
+                "body": json.dumps({
+                    "error": "Bad Request",
+                    "message": "Failed to load image"
+                })
+            }
         
-        logger.info(f"Image extracted: {image.format}, Size: {image.size}, Mode: {image.mode}")
+        logger.info(f"Processing verification for image from: {image_source}")
         
-        # Convert to RGB if necessary
+        # Convert to RGB for consistent hashing
         if image.mode != 'RGB':
             image = image.convert('RGB')
         
-        # Step 1: Extract watermark (if present)
-        watermark_data = _extract_watermark(image)
-        logger.info(f"Watermark extraction result: {watermark_data}")
+        # Compute perceptual hash
+        query_hash = str(imagehash.phash(image, hash_size=16))
+        logger.info(f"Computed hash for verification: {query_hash}")
         
-        # Step 2: Compute perceptual hash
-        perceptual_hash = _compute_perceptual_hash(image)
-        logger.info(f"Computed perceptual hash: {perceptual_hash}")
+        # Search for exact match first
+        try:
+            response = table.query(
+                IndexName='PerceptualHashIndex',
+                KeyConditionExpression='perceptualHash = :hash',
+                ExpressionAttributeValues={':hash': query_hash}
+            )
+            
+            if response['Items']:
+                # Exact match found
+                asset = response['Items'][0]
+                logger.info(f"Exact match found: {asset['assetId']}")
+                
+                metrics.add_metric(name="VerificationExactMatch", unit=MetricUnit.Count, value=1)
+                
+                return {
+                    "statusCode": 200,
+                    "headers": cors_headers,
+                    "body": json.dumps({
+                        "isAuthentic": True,
+                        "confidence": 1.0,
+                        "matchType": "exact",
+                        "assetId": asset['assetId'],
+                        "registrationDate": asset['timestamp'],
+                        "originalFilename": asset.get('originalFilename', 'unknown'),
+                        "details": {
+                            "hashMatch": query_hash,
+                            "status": asset.get('status', 'unknown'),
+                            "imageMetadata": asset.get('metadata', {})
+                        }
+                    })
+                }
+            
+        except ClientError as e:
+            logger.error(f"Error querying DynamoDB: {str(e)}")
+            metrics.add_metric(name="VerificationError", unit=MetricUnit.Count, value=1)
+            return {
+                "statusCode": 500,
+                "headers": cors_headers,
+                "body": json.dumps({
+                    "error": "Internal Server Error",
+                    "message": "Failed to verify image"
+                })
+            }
         
-        # Step 3: Query QLDB for matching records
-        registration_records = _query_qldb_for_hash(perceptual_hash)
-        logger.info(f"Found {len(registration_records)} matching records in QLDB")
+        # No exact match found - check for similar images
+        logger.info("No exact match found, checking for similar images")
         
-        # Step 4: Determine verdict
-        verdict_result = _determine_verdict(watermark_data, perceptual_hash, registration_records)
+        # Scan for similar hashes (this is expensive but needed for fuzzy matching)
+        # In production, you'd want to optimize this with better indexing strategies
+        try:
+            response = table.scan()
+            similar_assets = []
+            
+            query_hash_int = int(query_hash, 16)
+            
+            for item in response['Items']:
+                stored_hash = item['perceptualHash']
+                stored_hash_int = int(stored_hash, 16)
+                
+                # Calculate Hamming distance
+                hamming_distance = bin(query_hash_int ^ stored_hash_int).count('1')
+                similarity = 1.0 - (hamming_distance / 256.0)  # 256 bits total
+                
+                if similarity > 0.85:  # 85% similarity threshold
+                    similar_assets.append({
+                        "asset": item,
+                        "similarity": similarity,
+                        "hammingDistance": hamming_distance
+                    })
+            
+            if similar_assets:
+                # Sort by similarity
+                similar_assets.sort(key=lambda x: x['similarity'], reverse=True)
+                best_match = similar_assets[0]
+                
+                logger.info(f"Similar match found: {best_match['asset']['assetId']} with {best_match['similarity']:.2f} similarity")
+                
+                metrics.add_metric(name="VerificationSimilarMatch", unit=MetricUnit.Count, value=1)
+                
+                return {
+                    "statusCode": 200,
+                    "headers": cors_headers,
+                    "body": json.dumps({
+                        "isAuthentic": True,
+                        "confidence": best_match['similarity'],
+                        "matchType": "similar",
+                        "assetId": best_match['asset']['assetId'],
+                        "registrationDate": best_match['asset']['timestamp'],
+                        "originalFilename": best_match['asset'].get('originalFilename', 'unknown'),
+                        "details": {
+                            "queryHash": query_hash,
+                            "matchedHash": best_match['asset']['perceptualHash'],
+                            "hammingDistance": best_match['hammingDistance'],
+                            "similarity": best_match['similarity'],
+                            "status": best_match['asset'].get('status', 'unknown')
+                        }
+                    })
+                }
+            
+        except Exception as e:
+            logger.error(f"Error during similarity search: {str(e)}")
+            # Continue to return "not authentic" rather than error
         
-        logger.info(f"Verification verdict: {verdict_result['verdict']}")
+        # No match found
+        logger.info("No matching asset found in ledger")
+        metrics.add_metric(name="VerificationNoMatch", unit=MetricUnit.Count, value=1)
         
         return {
-            'statusCode': 200,
-            'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': 'Content-Type',
-                'Access-Control-Allow-Methods': 'POST, OPTIONS'
-            },
-            'body': json.dumps(verdict_result)
+            "statusCode": 200,
+            "headers": cors_headers,
+            "body": json.dumps({
+                "isAuthentic": False,
+                "confidence": 0.0,
+                "matchType": "none",
+                "message": "No matching asset found in authenticity ledger",
+                "details": {
+                    "queryHash": query_hash,
+                    "searchedAssets": response.get('Count', 0) if 'response' in locals() else 0
+                }
+            })
         }
         
-    except ValueError as e:
-        logger.error(f"Validation error: {e}")
-        return _error_response(400, str(e))
     except Exception as e:
-        logger.error(f"Unexpected error in verification: {e}")
-        return _error_response(500, "Internal server error during verification")
-
-
-def _extract_image_from_event(event):
-    """Extract PIL Image from Lambda event."""
-    try:
-        # Handle different event formats
-        body = event.get('body', '')
-        headers = event.get('headers', {})
-        is_base64 = event.get('isBase64Encoded', False)
+        logger.error(f"Unexpected error in verification: {str(e)}")
+        metrics.add_metric(name="VerificationUnexpectedError", unit=MetricUnit.Count, value=1)
         
-        content_type = headers.get('content-type', '').lower()
-        
-        if is_base64:
-            # Decode base64 body
-            body = base64.b64decode(body)
-        
-        if 'multipart/form-data' in content_type:
-            # Handle multipart form data (simplified parser)
-            return _parse_multipart_image(body, content_type)
-        else:
-            # Assume body is raw image data
-            return Image.open(io.BytesIO(body))
-            
-    except Exception as e:
-        logger.error(f"Error extracting image: {e}")
-        return None
-
-
-def _parse_multipart_image(body, content_type):
-    """Parse multipart form data to extract image."""
-    try:
-        # Extract boundary from content-type
-        boundary = None
-        if 'boundary=' in content_type:
-            boundary = content_type.split('boundary=')[1].strip()
-        
-        if not boundary:
-            raise ValueError("No boundary found in multipart data")
-        
-        # Simple multipart parser
-        parts = body.split(f'--{boundary}'.encode())
-        
-        for part in parts:
-            if b'Content-Type: image' in part:
-                # Find the image data (after double newline)
-                image_start = part.find(b'\r\n\r\n')
-                if image_start != -1:
-                    image_data = part[image_start + 4:]
-                    # Remove trailing boundary markers
-                    image_data = image_data.rstrip(b'\r\n--')
-                    return Image.open(io.BytesIO(image_data))
-        
-        raise ValueError("No image found in multipart data")
-        
-    except Exception as e:
-        logger.error(f"Error parsing multipart data: {e}")
-        raise
-
-
-def _extract_watermark(image):
-    """Extract watermark from image using steganography."""
-    try:
-        # Save image to temporary file for steganography library
-        temp_path = "/tmp/verify_image.png"
-        image.save(temp_path, "PNG")
-        
-        # Try to extract watermark
-        from steganography.steganography import Steganography
-        extracted_data = Steganography.decode(temp_path)
-        
-        # Clean up
-        os.remove(temp_path)
-        
-        return extracted_data if extracted_data else None
-        
-    except ImportError:
-        logger.warning("Steganography library not available, skipping watermark extraction")
-        return None
-    except Exception as e:
-        logger.warning(f"Failed to extract watermark: {e}")
-        return None
-
-
-def _compute_perceptual_hash(image):
-    """Compute perceptual hash of the image."""
-    try:
-        phash = imagehash.phash(image)
-        return str(phash)
-    except Exception as e:
-        logger.error(f"Failed to compute perceptual hash: {e}")
-        raise
-
-
-def _query_qldb_for_hash(perceptual_hash):
-    """Query QLDB for records matching the perceptual hash."""
-    try:
-        from pyqldb.driver.qldb_driver import QldbDriver
-        
-        driver = QldbDriver(LEDGER_NAME)
-        
-        def query_hash(txn):
-            """Query for matching hash records."""
-            statement = "SELECT * FROM registrations WHERE perceptualHash = ?"
-            cursor = txn.execute_statement(statement, perceptual_hash)
-            return list(cursor)
-        
-        results = driver.execute_lambda(query_hash)
-        driver.close()
-        
-        return results
-        
-    except ImportError:
-        logger.warning("pyqldb library not available, using mock data")
-        # Return mock data for testing
-        if perceptual_hash:
-            return [{
-                'documentId': 'mock-doc-123',
-                'timestamp': '2025-08-23T00:00:00Z',
-                'perceptualHash': perceptual_hash,
-                'status': 'REGISTERED'
-            }]
-        return []
-    except Exception as e:
-        logger.error(f"Error querying QLDB: {e}")
-        return []
-
-
-def _determine_verdict(watermark_data, perceptual_hash, registration_records):
-    """Determine the authenticity verdict based on available evidence."""
-    
-    # Initialize verdict data
-    verdict_data = {
-        'verdict': 'NOT_REGISTERED',
-        'confidence': 0.0,
-        'details': {
-            'watermarkFound': watermark_data is not None,
-            'hashMatch': len(registration_records) > 0,
-            'registrationDate': None,
-            'documentId': None,
-            'perceptualHash': perceptual_hash
+        return {
+            "statusCode": 500,
+            "headers": cors_headers,
+            "body": json.dumps({
+                "error": "Internal Server Error",
+                "message": "An unexpected error occurred during verification"
+            })
         }
-    }
-    
-    # If no records found in ledger
-    if not registration_records:
-        verdict_data['verdict'] = 'NOT_REGISTERED'
-        verdict_data['confidence'] = 0.95
-        return verdict_data
-    
-    # Get the most recent registration
-    latest_record = registration_records[0]
-    if len(registration_records) > 1:
-        # Sort by timestamp to get the latest
-        registration_records.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-        latest_record = registration_records[0]
-    
-    verdict_data['details']['registrationDate'] = latest_record.get('timestamp')
-    verdict_data['details']['documentId'] = latest_record.get('documentId')
-    
-    # Determine verdict based on evidence
-    if watermark_data and watermark_data == latest_record.get('documentId'):
-        # Perfect match: watermark contains the correct document ID
-        verdict_data['verdict'] = 'VERIFIED'
-        verdict_data['confidence'] = 0.98
-    elif watermark_data:
-        # Watermark exists but doesn't match - suspicious
-        verdict_data['verdict'] = 'POTENTIALLY_ALTERED'
-        verdict_data['confidence'] = 0.60
-        verdict_data['details']['watermarkMismatch'] = True
-    elif len(registration_records) > 0:
-        # Hash matches but no watermark - could be altered
-        verdict_data['verdict'] = 'POTENTIALLY_ALTERED'
-        verdict_data['confidence'] = 0.75
-        verdict_data['details']['missingWatermark'] = True
-    
-    return verdict_data
-
-
-def _error_response(status_code, message):
-    """Helper function to create consistent error responses."""
-    return {
-        'statusCode': status_code,
-        'headers': {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Headers': 'Content-Type',
-            'Access-Control-Allow-Methods': 'POST, OPTIONS'
-        },
-        'body': json.dumps({'error': message})
-    }

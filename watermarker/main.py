@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
 """
 Hatchmark Watermarker Service
-A containerized service that applies invisible watermarks to digital content
+A containerized service that processes SQS messages and applies invisible watermarks to digital content
 """
 
 import os
-import sys
 import json
 import time
 import logging
-import hashlib
+import io
 from datetime import datetime, timezone
-from io import BytesIO
 from typing import Optional, Dict, Any
 
 import boto3
 from botocore.exceptions import ClientError
 from PIL import Image
-import imagehash
+from steganography.steganography import Steganography
 
 # Setup logging
 logging.basicConfig(
@@ -27,371 +25,249 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class HatchmarkWatermarker:
-    """Main watermarker class"""
+    """Event-driven watermarker service that processes SQS messages"""
     
     def __init__(self):
-        """Initialize the watermarker"""
+        """Initialize the watermarker with AWS clients and configuration"""
+        # Get environment variables
         self.sqs_queue_url = os.environ.get('SQS_QUEUE_URL')
-        self.ingestion_bucket = os.environ.get('INGESTION_BUCKET', 'hatchmark-ingestion-bucket-36933227')
-        self.processed_bucket = os.environ.get('PROCESSED_BUCKET', 'hatchmark-processed-bucket-36933227')
+        self.ingestion_bucket = os.environ.get('INGESTION_BUCKET')
+        self.processed_bucket = os.environ.get('PROCESSED_BUCKET')
+        
+        # Validate required environment variables
+        if not all([self.sqs_queue_url, self.ingestion_bucket, self.processed_bucket]):
+            raise ValueError(
+                "Missing required environment variables: "
+                "SQS_QUEUE_URL, INGESTION_BUCKET, PROCESSED_BUCKET"
+            )
         
         # Initialize AWS clients
-        try:
-            self.s3_client = boto3.client('s3')
-            self.sqs_client = boto3.client('sqs') if self.sqs_queue_url else None
-            self.dynamodb = boto3.resource('dynamodb')
-            
-            # Initialize DynamoDB table
+        self.s3_client = boto3.client('s3')
+        self.sqs_client = boto3.client('sqs')
+        
+        logger.info("Hatchmark Watermarker initialized with:")
+        logger.info(f"  SQS Queue: {self.sqs_queue_url}")
+        logger.info(f"  Ingestion Bucket: {self.ingestion_bucket}")
+        logger.info(f"  Processed Bucket: {self.processed_bucket}")
+    
+    def run(self):
+        """Main processing loop - polls SQS queue for watermarking jobs"""
+        logger.info("Starting watermarker service main loop...")
+        
+        while True:
             try:
-                self.assets_table = self.dynamodb.Table('hatchmark-assets')
-            except Exception as e:
-                logger.warning(f"DynamoDB table not available: {e}")
-                self.assets_table = None
+                # Poll SQS queue for messages with long polling
+                logger.info("Polling SQS queue for watermarking jobs...")
                 
-        except Exception as e:
-            logger.warning(f"AWS clients not available: {e}")
-            self.s3_client = None
-            self.sqs_client = None
-            self.assets_table = None
-        
-        logger.info("Hatchmark Watermarker initialized")
+                response = self.sqs_client.receive_message(
+                    QueueUrl=self.sqs_queue_url,
+                    MaxNumberOfMessages=1,
+                    WaitTimeSeconds=20,  # Long polling - wait up to 20 seconds
+                    VisibilityTimeoutSeconds=900  # 15 minutes processing window
+                )
+                
+                messages = response.get('Messages', [])
+                
+                if not messages:
+                    logger.info("No messages in queue, continuing to poll...")
+                    continue
+                
+                # Process each message
+                for message in messages:
+                    message_id = message['MessageId']
+                    receipt_handle = message['ReceiptHandle']
+                    
+                    try:
+                        logger.info(f"Processing message: {message_id}")
+                        self.process_watermarking_job(message)
+                        
+                        # Delete message from queue after successful processing
+                        self.sqs_client.delete_message(
+                            QueueUrl=self.sqs_queue_url,
+                            ReceiptHandle=receipt_handle
+                        )
+                        logger.info(f"Successfully processed and deleted message: {message_id}")
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing message {message_id}: {str(e)}")
+                        # Message will be retried or sent to DLQ based on queue configuration
+                        
+            except Exception as e:
+                logger.error(f"Error in main processing loop: {str(e)}")
+                time.sleep(30)  # Wait before retrying
     
-    def compute_perceptual_hash(self, image: Image.Image) -> str:
-        """Compute perceptual hash of an image"""
-        try:
-            # Compute phash using imagehash library
-            phash = imagehash.phash(image)
-            return str(phash)
-        except Exception as e:
-            logger.error(f"Error computing perceptual hash: {e}")
-            raise
-    
-    def apply_watermark(self, image: Image.Image, watermark_data: str) -> Image.Image:
-        """Apply invisible watermark to image using steganography"""
-        try:
-            # Simple steganography: modify LSB of pixels
-            # Convert watermark data to binary
-            watermark_binary = ''.join(format(ord(char), '08b') for char in watermark_data)
-            watermark_binary += '1111111111111110'  # Delimiter
-            
-            # Convert image to RGB if not already
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-            
-            # Create a copy to modify
-            watermarked = image.copy()
-            pixels = list(watermarked.getdata())
-            
-            # Apply watermark to LSB of red channel
-            watermark_index = 0
-            for i, pixel in enumerate(pixels):
-                if watermark_index < len(watermark_binary):
-                    r, g, b = pixel
-                    # Modify LSB of red channel
-                    r = (r & 0xFE) | int(watermark_binary[watermark_index])
-                    pixels[i] = (r, g, b)
-                    watermark_index += 1
-                else:
-                    break
-            
-            # Create new image with modified pixels
-            watermarked.putdata(pixels)
-            return watermarked
-            
-        except Exception as e:
-            logger.error(f"Error applying watermark: {e}")
-            # Return original image if watermarking fails
-            return image
-    
-    def process_image_standalone(self, image_path: str) -> str:
-        """Process a single image in standalone mode"""
-        try:
-            logger.info(f"Processing image: {image_path}")
-            
-            # Open image
-            image = Image.open(image_path)
-            logger.info(f"Opened image: {image.size}, mode: {image.mode}")
-            
-            # Compute perceptual hash
-            perceptual_hash = self.compute_perceptual_hash(image)
-            logger.info(f"Computed perceptual hash: {perceptual_hash}")
-            
-            # Create watermark data
-            watermark_data = json.dumps({
-                'assetId': f"test_{int(time.time())}",
-                'timestamp': datetime.now(timezone.utc).isoformat(),
-                'hash': perceptual_hash
-            })
-            
-            # Apply watermark
-            watermarked_image = self.apply_watermark(image, watermark_data)
-            
-            # Save watermarked image
-            output_path = image_path.replace('.', '_watermarked.')
-            watermarked_image.save(output_path, quality=95)
-            
-            logger.info(f"Successfully processed {image_path} -> {output_path}")
-            return output_path
-            
-        except Exception as e:
-            logger.error(f"Error processing image {image_path}: {e}")
-            raise
-    
-    def run_standalone(self, image_path: str):
-        """Run in standalone mode for testing"""
-        logger.info("Running in standalone mode")
-        
-        try:
-            processed_path = self.process_image_standalone(image_path)
-            print(f"Successfully processed: {image_path} -> {processed_path}")
-            return processed_path
-        except Exception as e:
-            print(f"Processing failed: {e}")
-            return None
-
-def main():
-    """Main entry point"""
-    watermarker = HatchmarkWatermarker()
-    
-    # Check for standalone mode (for testing)
-    if len(sys.argv) > 1:
-        image_path = sys.argv[1]
-        watermarker.run_standalone(image_path)
-    else:
-        print("Usage: python main.py <image_path>")
-        print("Example: python main.py test_image.jpg")
-
-if __name__ == '__main__':
-    main()
-
-# Initialize AWS clients
-s3_client = boto3.client('s3')
-sqs_client = boto3.client('sqs')
-
-# Environment variables with fallback defaults
-INGESTION_BUCKET = os.environ.get('INGESTION_BUCKET', 'hatchmark-ingestion-bucket-36933227')
-PROCESSED_BUCKET = os.environ.get('PROCESSED_BUCKET', 'hatchmark-processed-bucket-36933227')
-SQS_QUEUE_URL = os.environ.get('SQS_QUEUE_URL')
-
-# Log configuration
-print(f"Watermarker starting with config:")
-print(f"  INGESTION_BUCKET: {INGESTION_BUCKET}")
-print(f"  PROCESSED_BUCKET: {PROCESSED_BUCKET}")
-print(f"  SQS_QUEUE_URL: {SQS_QUEUE_URL}")
-print(f"  Running mode: {'Production' if SQS_QUEUE_URL else 'Test'}")
-
-def download_image_from_s3(bucket_name, object_key):
-    """Download image from S3 into memory."""
-    try:
-        print(f"Downloading image from S3: s3://{bucket_name}/{object_key}")
-        response = s3_client.get_object(Bucket=bucket_name, Key=object_key)
-        image_data = response['Body'].read()
-        
-        # Load image using PIL
-        image = Image.open(io.BytesIO(image_data))
-        print(f"Image loaded: {image.format}, Size: {image.size}, Mode: {image.mode}")
-        return image
-    except ClientError as e:
-        print(f"Error downloading from S3: {e}")
-        raise
-    except Exception as e:
-        print(f"Error processing image: {e}")
-        raise
-
-def upload_image_to_s3(image, bucket_name, object_key):
-    """Upload processed image to S3."""
-    try:
-        # Convert PIL Image to bytes
-        img_byte_arr = io.BytesIO()
-        # Preserve original format or use PNG as fallback
-        image_format = image.format if image.format else 'PNG'
-        image.save(img_byte_arr, format=image_format)
-        img_byte_arr.seek(0)
-        
-        print(f"Uploading watermarked image to S3: s3://{bucket_name}/{object_key}")
-        s3_client.put_object(
-            Bucket=bucket_name,
-            Key=object_key,
-            Body=img_byte_arr.getvalue(),
-            ContentType=f'image/{image_format.lower()}'
-        )
-        print(f"Successfully uploaded to s3://{bucket_name}/{object_key}")
-        return True
-    except Exception as e:
-        print(f"Error uploading to S3: {e}")
-        raise
-
-def embed_watermark(image, watermark_data):
-    """Embed invisible watermark using steganography."""
-    try:
-        print(f"Embedding watermark data: {watermark_data}")
-        
-        # Convert PIL Image to temporary file for steganography library
-        temp_input = "/tmp/temp_input.png"
-        temp_output = "/tmp/temp_output.png"
-        
-        # Save image temporarily
-        image.save(temp_input, "PNG")
-        
-        # Embed the watermark
-        Steganography.encode(temp_input, temp_output, watermark_data)
-        
-        # Load the watermarked image
-        watermarked_image = Image.open(temp_output)
-        
-        # Clean up temporary files
-        os.remove(temp_input)
-        os.remove(temp_output)
-        
-        print("Watermark successfully embedded")
-        return watermarked_image
-    except Exception as e:
-        print(f"Error embedding watermark: {e}")
-        # If steganography fails, return the original image
-        print("Falling back to original image without watermark")
-        return image
-
-def extract_watermark(image):
-    """Extract watermark from image."""
-    try:
-        # Save image temporarily
-        temp_input = "/tmp/temp_extract.png"
-        image.save(temp_input, "PNG")
-        
-        # Extract the watermark
-        extracted_data = Steganography.decode(temp_input)
-        
-        # Clean up temporary file
-        os.remove(temp_input)
-        
-        print(f"Extracted watermark: {extracted_data}")
-        return extracted_data
-    except Exception as e:
-        print(f"Error extracting watermark: {e}")
-        return None
-
-def process_sqs_message():
-    """Process a single message from SQS queue."""
-    try:
-        if not SQS_QUEUE_URL:
-            print("No SQS queue URL configured, running in test mode")
-            return process_test_image()
-        
-        # Receive message from SQS
-        print(f"Polling SQS queue: {SQS_QUEUE_URL}")
-        response = sqs_client.receive_message(
-            QueueUrl=SQS_QUEUE_URL,
-            MaxNumberOfMessages=1,
-            WaitTimeSeconds=20  # Long polling
-        )
-        
-        messages = response.get('Messages', [])
-        if not messages:
-            print("No messages in queue")
-            return
-        
-        message = messages[0]
-        receipt_handle = message['ReceiptHandle']
-        
+    def process_watermarking_job(self, message: Dict[str, Any]):
+        """Process a single watermarking job from SQS message"""
         try:
             # Parse message body
             message_body = json.loads(message['Body'])
-            # Parse message body for object key and QLDB document ID
-            object_key = message_body.get('objectKey')
-            qldb_document_id = message_body.get('qldbDocumentId')
-            bucket_name = message_body.get('bucketName', INGESTION_BUCKET)
             
-            if not object_key or not qldb_document_id:
-                print(f"Invalid message format: {message_body}")
-                return
+            # Handle nested message body structure from Step Functions
+            if 'MessageBody' in message_body:
+                job_data = message_body['MessageBody']
+            else:
+                job_data = message_body
             
-            print(f"Processing watermarking request for {object_key} with QLDB document ID: {qldb_document_id}")
+            logger.info(f"Job data: {json.dumps(job_data, indent=2)}")
             
-            # Download the original image file from the ingestion S3 bucket
-            image = download_image_from_s3(bucket_name, object_key)
+            # Extract required job parameters
+            asset_id = job_data['assetId']
+            object_key = job_data['objectKey']
+            bucket = job_data.get('bucket', self.ingestion_bucket)
+            perceptual_hash = job_data['perceptualHash']
+            timestamp = job_data.get('timestamp', datetime.utcnow().isoformat())
             
-            # Use steganography library to embed the qldbDocumentId as invisible watermark
-            watermarked_image = embed_watermark(image, qldb_document_id)
+            logger.info(f"Processing watermarking for asset: {asset_id}")
             
-            # Generate output key for the processed bucket
-            # Extract original filename from the object key
-            original_filename = object_key.split('/')[-1]
-            output_key = f"watermarked/{original_filename}"
+            # Step 1: Download original image from S3
+            logger.info(f"Downloading image: s3://{bucket}/{object_key}")
+            image_data = self.download_image_from_s3(bucket, object_key)
             
-            # Upload the watermarked image to the processed S3 bucket
-            upload_image_to_s3(watermarked_image, PROCESSED_BUCKET, output_key)
-            
-            # Delete message from queue on success
-            sqs_client.delete_message(
-                QueueUrl=SQS_QUEUE_URL,
-                ReceiptHandle=receipt_handle
+            # Step 2: Apply invisible watermark
+            logger.info(f"Applying watermark with asset ID: {asset_id}")
+            watermarked_data = self.apply_steganographic_watermark(
+                image_data, asset_id, perceptual_hash, timestamp
             )
             
-            print(f"Successfully processed watermarking for QLDB document {qldb_document_id}")
+            # Step 3: Generate processed file key
+            original_filename = object_key.split('/')[-1]
+            processed_key = f"watermarked/{asset_id}/{original_filename}"
+            
+            # Step 4: Upload watermarked image to processed bucket
+            logger.info(f"Uploading watermarked image: s3://{self.processed_bucket}/{processed_key}")
+            self.upload_image_to_s3(
+                watermarked_data, self.processed_bucket, processed_key, original_filename
+            )
+            
+            logger.info(f"Successfully completed watermarking for asset: {asset_id}")
             
         except Exception as e:
-            print(f"Error processing message: {e}")
-            # Message will remain in queue for retry
+            logger.error(f"Error in watermarking job: {str(e)}")
             raise
+    
+    def download_image_from_s3(self, bucket: str, object_key: str) -> bytes:
+        """Download image from S3 and return as bytes"""
+        try:
+            response = self.s3_client.get_object(Bucket=bucket, Key=object_key)
+            return response['Body'].read()
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            if error_code == 'NoSuchKey':
+                raise ValueError(f"File not found: s3://{bucket}/{object_key}")
+            else:
+                raise ValueError(f"Failed to download from S3: {str(e)}")
+    
+    def apply_steganographic_watermark(
+        self, 
+        image_data: bytes, 
+        asset_id: str, 
+        perceptual_hash: str,
+        timestamp: str
+    ) -> bytes:
+        """Apply invisible watermark using steganography"""
+        try:
+            # Load image with PIL
+            image = Image.open(io.BytesIO(image_data))
             
-    except Exception as e:
-        print(f"Error in SQS processing: {e}")
-        raise
-
-def process_test_image():
-    """Create and process a test image for development/testing."""
-    print("Running in test mode - creating dummy image")
+            # Convert to RGB if necessary for steganography
+            if image.mode != 'RGB':
+                logger.info(f"Converting image from {image.mode} to RGB for watermarking")
+                image = image.convert('RGB')
+            
+            # Create comprehensive watermark payload
+            watermark_payload = {
+                "service": "hatchmark",
+                "version": "1.0",
+                "assetId": asset_id,
+                "perceptualHash": perceptual_hash,
+                "timestamp": timestamp,
+                "watermarked": datetime.utcnow().isoformat()
+            }
+            
+            watermark_message = json.dumps(watermark_payload, separators=(',', ':'))
+            logger.info(f"Embedding watermark payload: {watermark_message}")
+            
+            # Apply steganographic watermark using LSB steganography
+            watermarked_image = Steganography.encode(image, watermark_message)
+            
+            # Convert back to bytes
+            output_buffer = io.BytesIO()
+            
+            # Preserve original format when possible
+            original_format = image.format or 'JPEG'
+            if original_format.upper() == 'JPEG':
+                # Use high quality for JPEG to minimize compression artifacts
+                watermarked_image.save(output_buffer, format='JPEG', quality=95, optimize=True)
+            else:
+                watermarked_image.save(output_buffer, format=original_format)
+            
+            output_buffer.seek(0)
+            return output_buffer.read()
+            
+        except Exception as e:
+            logger.error(f"Failed to apply watermark: {str(e)}")
+            raise ValueError(f"Watermarking failed: {str(e)}")
     
-    # Create a test image
-    test_image = Image.new('RGB', (400, 400), color='blue')
-    
-    # Add some visual content
-    from PIL import ImageDraw, ImageFont
-    draw = ImageDraw.Draw(test_image)
-    try:
-        # Try to use a default font
-        font = ImageFont.load_default()
-    except:
-        font = None
-    
-    draw.text((50, 180), "HATCHMARK TEST IMAGE", fill='white', font=font)
-    
-    # Embed test watermark
-    test_transaction_id = "test-transaction-12345"
-    watermarked_image = embed_watermark(test_image, test_transaction_id)
-    
-    # Save to local file for testing
-    output_path = "/app/test_watermarked.png"
-    watermarked_image.save(output_path)
-    print(f"Test watermarked image saved to {output_path}")
-    
-    # Test extraction
-    extracted = extract_watermark(watermarked_image)
-    print(f"Watermark extraction test result: {extracted}")
-    
-    return True
+    def upload_image_to_s3(
+        self, 
+        image_data: bytes, 
+        bucket: str, 
+        object_key: str, 
+        original_filename: str
+    ):
+        """Upload watermarked image to S3 with appropriate metadata"""
+        try:
+            # Determine content type from file extension
+            file_extension = original_filename.lower().split('.')[-1]
+            content_type_mapping = {
+                'jpg': 'image/jpeg',
+                'jpeg': 'image/jpeg', 
+                'png': 'image/png',
+                'webp': 'image/webp',
+                'bmp': 'image/bmp',
+                'tiff': 'image/tiff'
+            }
+            content_type = content_type_mapping.get(file_extension, 'image/jpeg')
+            
+            # Upload with comprehensive metadata
+            self.s3_client.put_object(
+                Bucket=bucket,
+                Key=object_key,
+                Body=image_data,
+                ContentType=content_type,
+                Metadata={
+                    'watermarked': 'true',
+                    'watermark-version': '1.0',
+                    'watermark-service': 'hatchmark',
+                    'original-filename': original_filename,
+                    'processed-timestamp': datetime.utcnow().isoformat(),
+                    'processor': 'hatchmark-watermarker-fargate'
+                },
+                ServerSideEncryption='AES256'  # Encrypt at rest
+            )
+            
+            logger.info(f"Successfully uploaded watermarked image to s3://{bucket}/{object_key}")
+            
+        except ClientError as e:
+            logger.error(f"Failed to upload to S3: {str(e)}")
+            raise ValueError(f"S3 upload failed: {str(e)}")
 
 def main():
-    """Main entry point for the watermarker service."""
-    print("--- Hatchmark Watermarker Service Started ---")
+    """Main entry point for the containerized watermarker service"""
+    logger.info("=== Hatchmark Watermarker Service Starting ===")
     
     try:
-        # Check if running in Fargate (with SQS) or test mode
-        if SQS_QUEUE_URL:
-            print("Running in production mode with SQS")
-            while True:
-                process_sqs_message()
-        else:
-            print("Running in test mode")
-            process_test_image()
-            
+        # Initialize and run the watermarker service
+        watermarker = HatchmarkWatermarker()
+        watermarker.run()
+        
     except KeyboardInterrupt:
-        print("Service interrupted by user")
+        logger.info("Received interrupt signal, shutting down gracefully...")
     except Exception as e:
-        print(f"Fatal error in watermarker service: {e}")
+        logger.error(f"Fatal error in watermarker service: {str(e)}")
         raise
     finally:
-        print("--- Hatchmark Watermarker Service Finished ---")
+        logger.info("=== Hatchmark Watermarker Service Stopped ===")
 
 if __name__ == "__main__":
     main()

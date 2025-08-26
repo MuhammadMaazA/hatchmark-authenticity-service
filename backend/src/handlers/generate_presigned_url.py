@@ -1,130 +1,193 @@
-"""
-Lambda function to generate presigned URLs for secure S3 uploads.
-Part of the Hatchmark Digital Authenticity Service.
-"""
-
 import boto3
 import json
 import os
 import logging
 import uuid
-from aws_lambda_powertools import Logger
 from botocore.exceptions import ClientError
+from aws_lambda_powertools import Logger, Tracer, Metrics
+from aws_lambda_powertools.logging import correlation_paths
+from aws_lambda_powertools.metrics import MetricUnit
 
-# Initialize powertools logger
+# Initialize AWS Lambda Powertools
 logger = Logger()
+tracer = Tracer()
+metrics = Metrics()
 
-# Initialize S3 client
+# Initialize boto3 client
 s3_client = boto3.client('s3')
 
-@logger.inject_lambda_context
+@logger.inject_lambda_context(correlation_id_path=correlation_paths.API_GATEWAY_HTTP)
+@tracer.capture_lambda_handler
+@metrics.log_metrics(capture_cold_start_metric=True)
 def lambda_handler(event, context):
     """
-    AWS Lambda handler for generating presigned URLs.
+    Generate presigned URL for secure file upload to S3
     
-    Expected event body (JSON):
+    Expected input:
     {
-        "filename": "my-art.jpg"
+        "body": "{\"filename\": \"my-art.jpg\"}"
     }
     
     Returns:
     {
-        "uploadUrl": "https://...",
-        "objectKey": "uploads/uuid/filename"
+        "statusCode": 200,
+        "headers": {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Content-Type",
+            "Access-Control-Allow-Methods": "POST, OPTIONS"
+        },
+        "body": "{\"uploadUrl\": \"...\", \"objectKey\": \"...\"}"
     }
     """
     
+    # CORS headers for all responses
+    cors_headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Content-Type": "application/json"
+    }
+    
     try:
-        # Parse the request body
-        if 'body' not in event:
-            logger.error("No body in event")
-            return _error_response(400, "Request body is required")
-        
-        body = json.loads(event['body'])
-        filename = body.get('filename', '').strip()
-        
-        # Basic validation
-        if not filename:
-            logger.error("Filename not provided or empty")
-            return _error_response(400, "filename is required and cannot be empty")
-        
-        # Additional validation - basic security checks
-        if len(filename) > 255:
-            return _error_response(400, "filename too long (max 255 characters)")
-        
-        # Check for dangerous characters
-        dangerous_chars = ['..', '/', '\\', '<', '>', ':', '"', '|', '?', '*']
-        if any(char in filename for char in dangerous_chars):
-            return _error_response(400, "filename contains invalid characters")
-        
-        # Get the ingestion bucket name from environment variable
+        # Get environment variables
         ingestion_bucket = os.environ.get('INGESTION_BUCKET')
         if not ingestion_bucket:
             logger.error("INGESTION_BUCKET environment variable not set")
-            return _error_response(500, "Server configuration error")
+            return {
+                "statusCode": 500,
+                "headers": cors_headers,
+                "body": json.dumps({
+                    "error": "Internal server configuration error",
+                    "message": "Storage bucket not configured"
+                })
+            }
         
-        # Generate a unique object key to prevent file collisions
+        # Handle CORS preflight requests
+        if event.get('httpMethod') == 'OPTIONS':
+            return {
+                "statusCode": 200,
+                "headers": cors_headers,
+                "body": ""
+            }
+        
+        # Parse request body
+        if not event.get('body'):
+            logger.warning("Empty request body received")
+            return {
+                "statusCode": 400,
+                "headers": cors_headers,
+                "body": json.dumps({
+                    "error": "Bad Request",
+                    "message": "Request body is required"
+                })
+            }
+        
+        try:
+            body = json.loads(event['body'])
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON in request body: {str(e)}")
+            return {
+                "statusCode": 400,
+                "headers": cors_headers,
+                "body": json.dumps({
+                    "error": "Bad Request",
+                    "message": "Invalid JSON format"
+                })
+            }
+        
+        # Validate filename
+        filename = body.get('filename')
+        if not filename or not filename.strip():
+            logger.warning("Missing or empty filename in request")
+            return {
+                "statusCode": 400,
+                "headers": cors_headers,
+                "body": json.dumps({
+                    "error": "Bad Request",
+                    "message": "Filename is required and cannot be empty"
+                })
+            }
+        
+        # Sanitize filename and validate file extension
+        filename = filename.strip()
+        allowed_extensions = ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tiff']
+        file_extension = os.path.splitext(filename.lower())[1]
+        
+        if file_extension not in allowed_extensions:
+            logger.warning(f"Unsupported file extension: {file_extension}")
+            return {
+                "statusCode": 400,
+                "headers": cors_headers,
+                "body": json.dumps({
+                    "error": "Bad Request",
+                    "message": f"Unsupported file type. Allowed: {', '.join(allowed_extensions)}"
+                })
+            }
+        
+        # Generate unique object key to prevent collisions
+        # Pattern: uploads/{uuid4()}/{original_filename}
         unique_id = str(uuid.uuid4())
         object_key = f"uploads/{unique_id}/{filename}"
         
-        logger.info(f"Generating presigned URL for: {object_key}")
+        logger.info(f"Generating presigned URL for object: {object_key}")
         
-        # Generate presigned URL for PUT operation (10 minutes expiry)
-        try:
-            presigned_url = s3_client.generate_presigned_url(
-                'put_object',
-                Params={
-                    'Bucket': ingestion_bucket,
-                    'Key': object_key,
-                    'ContentType': 'image/*'  # Restrict to images for security
-                },
-                ExpiresIn=600  # 10 minutes as specified
-            )
-        except ClientError as e:
-            logger.error(f"AWS S3 error generating presigned URL: {e}")
-            return _error_response(500, "Failed to generate upload URL")
+        # Generate presigned URL for PUT operation
+        presigned_url = s3_client.generate_presigned_url(
+            'put_object',
+            Params={
+                'Bucket': ingestion_bucket,
+                'Key': object_key,
+                'ContentType': f'image/{file_extension[1:]}' if file_extension != '.jpg' else 'image/jpeg'
+            },
+            ExpiresIn=600,  # 10 minutes
+            HttpMethod='PUT'
+        )
         
-        # Success response
-        response_body = {
-            "uploadUrl": presigned_url,
-            "objectKey": object_key
-        }
+        # Log success metrics
+        metrics.add_metric(name="PresignedUrlGenerated", unit=MetricUnit.Count, value=1)
         
         logger.info(f"Successfully generated presigned URL for {filename}")
         
-        return {
-            'statusCode': 200,
-            'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': 'Content-Type',
-                'Access-Control-Allow-Methods': 'POST, OPTIONS'
-            },
-            'body': json.dumps(response_body)
+        response_body = {
+            "uploadUrl": presigned_url,
+            "objectKey": object_key,
+            "expiresIn": 600,
+            "filename": filename,
+            "assetId": unique_id
         }
         
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON decode error: {e}")
-        return _error_response(400, "Invalid JSON in request body")
-    
+        return {
+            "statusCode": 200,
+            "headers": cors_headers,
+            "body": json.dumps(response_body)
+        }
+        
     except ClientError as e:
-        logger.error(f"AWS client error: {e}")
-        return _error_response(500, "AWS service error")
-    
+        error_code = e.response['Error']['Code']
+        error_message = e.response['Error']['Message']
+        
+        logger.error(f"AWS ClientError: {error_code} - {error_message}")
+        metrics.add_metric(name="PresignedUrlError", unit=MetricUnit.Count, value=1)
+        
+        return {
+            "statusCode": 500,
+            "headers": cors_headers,
+            "body": json.dumps({
+                "error": "Internal Server Error",
+                "message": "Failed to generate upload URL",
+                "code": error_code
+            })
+        }
+        
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        return _error_response(500, "Internal server error")
-
-
-def _error_response(status_code, message):
-    """Helper function to create consistent error responses."""
-    return {
-        'statusCode': status_code,
-        'headers': {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Headers': 'Content-Type',
-            'Access-Control-Allow-Methods': 'POST, OPTIONS'
-        },
-        'body': json.dumps({'error': message})
-    }
+        logger.error(f"Unexpected error: {str(e)}")
+        metrics.add_metric(name="PresignedUrlError", unit=MetricUnit.Count, value=1)
+        
+        return {
+            "statusCode": 500,
+            "headers": cors_headers,
+            "body": json.dumps({
+                "error": "Internal Server Error",
+                "message": "An unexpected error occurred"
+            })
+        }

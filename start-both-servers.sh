@@ -30,7 +30,7 @@ cd ..
 sleep 3
 
 # Start frontend  
-echo " Starting Frontend Server (Vite + React)..."
+echo "▶️ Starting Frontend Server (Vite + React)..."
 cd frontend
 npm run dev &
 FRONTEND_PID=$!
@@ -41,7 +41,7 @@ cd ..
 sleep 3
 
 echo ""
-echo " Both servers are now running!"
+echo "✅ Both servers are now running!"
 echo "📱 Frontend: http://localhost:8080"
 echo "🔧 Backend:  http://localhost:3002"
 echo ""
@@ -68,61 +68,4 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # Wait for processes
-wait
-    FRONTEND_PID=$!
-    echo "Frontend PID: $FRONTEND_PID"
-    cd ..
-}
-
-# Start backend first
-start_backend
-
-# Wait for backend to start
-echo " Waiting for backend to initialize..."
-sleep 3
-
-# Start frontend
-start_frontend
-
-# Wait for frontend to start
-echo " Waiting for frontend to initialize..."
-sleep 3
-
-echo ""
-echo " Development servers started!"
-echo ""
-echo " Backend API:  http://localhost:3002"
-echo " Frontend:     http://localhost:8080 (or 8081 if 8080 is busy)"
-echo ""
-echo " Backend Endpoints:"
-echo "   GET  /health"
-echo "   POST /uploads/initiate"
-echo "   POST /verify"
-echo "   GET  /verify"
-echo "   GET  /ledger"
-echo "   POST /ledger"
-echo ""
-echo "  To stop both servers: Ctrl+C or run: ./stop-dev.sh"
-echo ""
-
-# Function to handle cleanup on exit
-cleanup() {
-    echo ""
-    echo " Shutting down development servers..."
-    kill $BACKEND_PID 2>/dev/null || true
-    kill $FRONTEND_PID 2>/dev/null || true
-    pkill -f "local_dev_server" 2>/dev/null || true
-    pkill -f "npm run dev" 2>/dev/null || true
-    echo " Cleanup complete!"
-    exit 0
-}
-
-# Set up signal handlers
-trap cleanup SIGINT SIGTERM
-
-# Keep the script running and show logs
-echo " Monitoring servers... (Press Ctrl+C to stop)"
-echo "───────────────────────────────────────────────"
-
-# Wait for user to stop
 wait

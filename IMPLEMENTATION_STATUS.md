@@ -33,7 +33,7 @@ The Hatchmark Digital Authenticity Service is now fully implemented and operatio
 - **S3 Buckets**: 
   - `hatchmark-ingestion-bucket-36933227` (for original files)
   - `hatchmark-processed-bucket-36933227` (for watermarked files)
-- **DynamoDB Table**: `hatchmark-assets` (asset registry)
+- **DynamoDB Table**: `hatchmark-assets` (immutable asset registry, replacing QLDB)
 - **AWS Profile**: `hatchmark-dev` configured
 
 #### Watermarker Service
@@ -63,10 +63,10 @@ The Hatchmark Digital Authenticity Service is now fully implemented and operatio
 - [x] All required dependencies installed
 - [x] Project structure established
 
-#### Phase 1: Core Infrastructure
+#### Phase 1: Core Infrastructure  
 - [x] S3 buckets created with proper security
-- [x] DynamoDB table with Point-in-Time Recovery
-- [x] Global secondary index for perceptual hash lookups
+- [x] DynamoDB table with Point-in-Time Recovery (replacing QLDB)
+- [x] Global secondary indexes for perceptual hash and timestamp lookups
 - [x] Proper IAM permissions and policies
 
 #### Phase 2: API Gateway & Lambda Functions

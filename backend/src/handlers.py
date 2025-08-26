@@ -7,7 +7,7 @@ from botocore.exceptions import ClientError
 
 # Initialize AWS clients
 s3_client = boto3.client('s3')
-qldb_session = boto3.client('qldb-session')
+dynamodb = boto3.resource('dynamodb')
 
 def generate_presigned_url(event, context):
     """
@@ -118,7 +118,7 @@ def compute_phash(event, context):
 
 def write_to_ledger(event, context):
     """
-    Lambda function to write registration data to QLDB.
+    Lambda function to write registration data to DynamoDB.
     """
     try:
         # Get data from the previous step (compute_phash)

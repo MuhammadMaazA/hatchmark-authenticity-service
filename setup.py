@@ -129,17 +129,16 @@ def deploy_sam_stack():
         print(f" Failed to deploy SAM stack: {e}")
         sys.exit(1)
 
-def setup_qldb_tables():
-    """Set up QLDB ledger tables and indexes."""
-    print_step("Setting up QLDB tables")
+def setup_dynamodb_tables():
+    """Set up DynamoDB tables and indexes."""
+    print_step("Setting up DynamoDB tables")
     
     try:
-        # Run the QLDB setup script
-        subprocess.run([sys.executable, "scripts/setup_qldb.py"], check=True)
-        print(" QLDB tables and indexes created")
-    except subprocess.CalledProcessError as e:
-        print(f" Failed to setup QLDB: {e}")
-        print("You may need to run 'pip install pyqldb' first")
+        # DynamoDB tables are created via SAM template
+        print(" DynamoDB tables will be created during SAM deployment")
+    except Exception as e:
+        print(f" Note: {e}")
+        print("Tables will be created automatically via CloudFormation")
 
 def get_stack_outputs(stack_name):
     """Get CloudFormation stack outputs."""
@@ -165,20 +164,20 @@ def display_results(outputs):
     
     if 'HatchmarkApiGatewayUrl' in outputs:
         api_url = outputs['HatchmarkApiGatewayUrl']
-        print(f"🌐 API Gateway URL: {api_url}")
+        print(f"API Gateway URL: {api_url}")
         print(f"   Upload endpoint: {api_url}uploads/initiate")
         print(f"   Verify endpoint: {api_url}verify")
     
     if 'IngestionBucket' in outputs:
-        print(f"📁 Ingestion Bucket: {outputs['IngestionBucket']}")
+        print(f"Ingestion Bucket: {outputs['IngestionBucket']}")
     
     if 'ProcessedBucket' in outputs:
-        print(f"📁 Processed Bucket: {outputs['ProcessedBucket']}")
+        print(f"Processed Bucket: {outputs['ProcessedBucket']}")
     
-    if 'QLDBLedger' in outputs:
-        print(f"📒 QLDB Ledger: {outputs['QLDBLedger']}")
+    if 'DynamoDBTable' in outputs:
+        print(f"Database Table: {outputs['DynamoDBTable']}")
     
-    print("\n🎉 Hatchmark is now deployed and ready to use!")
+    print("\nHatchmark is now deployed and ready to use!")
     print("\nNext steps:")
     print("1. Test the upload endpoint with the frontend")
     print("2. Upload a test image and verify the workflow")
@@ -199,8 +198,8 @@ def main():
     # Deploy SAM stack
     stack_name = deploy_sam_stack()
     
-    # Setup QLDB
-    setup_qldb_tables()
+    # Setup DynamoDB
+    setup_dynamodb_tables()
     
     # Get and display results
     outputs = get_stack_outputs(stack_name)

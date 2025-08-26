@@ -1,6 +1,8 @@
 import { useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-import { Upload, FileImage, CheckCircle, AlertCircle, Shield, Download, ExternalLink } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Upload, FileImage, CheckCircle, AlertCircle, Shield, Download, User, Mail } from "lucide-react";
 
 interface UploadResult {
   uploadId: string;
@@ -11,12 +13,18 @@ interface UploadResult {
   timestamp?: string;
 }
 
+interface UserInfo {
+  name: string;
+  email: string;
+}
+
 const UploadSection = () => {
   const [isDragging, setIsDragging] = useState(false);
-  const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'processing' | 'success' | 'error'>('idle');
+  const [uploadStatus, setUploadStatus] = useState<'idle' | 'user-info' | 'uploading' | 'processing' | 'success' | 'error'>('idle');
   const [file, setFile] = useState<File | null>(null);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const [userInfo, setUserInfo] = useState<UserInfo>({ name: '', email: '' });
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -37,7 +45,7 @@ const UploadSection = () => {
       const file = droppedFiles[0];
       if (file.type.startsWith('image/')) {
         setFile(file);
-        handleUpload(file);
+        setUploadStatus('user-info');
       } else {
         setErrorMessage('Please upload an image file (JPG, PNG, etc.)');
         setUploadStatus('error');
@@ -49,17 +57,18 @@ const UploadSection = () => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
       setFile(selectedFile);
-      handleUpload(selectedFile);
+      setUploadStatus('user-info');
     }
   }, []);
 
-  const handleUpload = async (uploadFile: File) => {
+  const handleUpload = async (uploadFile: File, userData: UserInfo) => {
     setUploadStatus('uploading');
     setErrorMessage('');
 
     try {
+      console.log('Starting upload process...');
       // Step 1: Get presigned URL
-      const response = await fetch('/api/upload/initiate', {
+      const response = await fetch('http://localhost:3002/uploads/initiate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -68,17 +77,25 @@ const UploadSection = () => {
           filename: uploadFile.name,
           contentType: uploadFile.type,
           fileSize: uploadFile.size,
+          creator: userData.name,
+          email: userData.email,
         }),
       });
 
+      console.log('Upload initiate response status:', response.status);
+      
       if (!response.ok) {
-        throw new Error('Failed to initiate upload');
+        const errorText = await response.text();
+        console.error('Upload initiate failed:', errorText);
+        throw new Error(`Failed to initiate upload: ${response.status} ${errorText}`);
       }
 
       const uploadData: UploadResult = await response.json();
+      console.log('Upload data received:', uploadData);
       setUploadResult(uploadData);
 
       // Step 2: Upload file to S3
+      console.log('Uploading to S3...', uploadData.uploadUrl);
       const uploadResponse = await fetch(uploadData.uploadUrl, {
         method: 'PUT',
         body: uploadFile,
@@ -87,14 +104,17 @@ const UploadSection = () => {
         },
       });
 
+      console.log('S3 upload response status:', uploadResponse.status);
+
       if (!uploadResponse.ok) {
-        throw new Error('Failed to upload file');
+        console.error('S3 upload failed:', uploadResponse.status, uploadResponse.statusText);
+        throw new Error(`Failed to upload file: ${uploadResponse.status} ${uploadResponse.statusText}`);
       }
 
       setUploadStatus('processing');
 
       // Step 3: Notify backend of successful upload
-      const completeResponse = await fetch('/api/upload/complete', {
+      const completeResponse = await fetch('http://localhost:3002/uploads/complete', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -102,10 +122,13 @@ const UploadSection = () => {
         body: JSON.stringify({
           uploadId: uploadData.uploadId,
           objectKey: uploadData.objectKey,
+          creator: userData.name,
+          email: userData.email,
         }),
       });
 
       if (!completeResponse.ok) {
+        console.error('Upload completion failed:', completeResponse.status);
         throw new Error('Failed to complete upload');
       }
 
@@ -261,8 +284,12 @@ const UploadSection = () => {
           <span class="value">${uploadResult.timestamp ? new Date(uploadResult.timestamp).toLocaleString() : new Date().toLocaleString()}</span>
         </div>
         <div class="field">
-          <span class="label">Hash:</span>
-          <span class="value">${uploadResult.perceptualHash || 'Computing...'}</span>
+          <span class="label">Creator:</span>
+          <span class="value">${userInfo.name || 'Anonymous'}</span>
+        </div>
+        <div class="field">
+          <span class="label">Email:</span>
+          <span class="value">${userInfo.email || 'Not provided'}</span>
         </div>
         <div class="field">
           <span class="label">Storage:</span>
@@ -311,6 +338,19 @@ const UploadSection = () => {
     setUploadResult(null);
     setUploadStatus('idle');
     setErrorMessage('');
+    setUserInfo({ name: '', email: '' });
+  };
+
+  const handleUserInfoSubmit = () => {
+    if (!userInfo.name.trim() || !userInfo.email.trim()) {
+      setErrorMessage('Please enter both name and email address');
+      return;
+    }
+    if (!file) {
+      setErrorMessage('No file selected');
+      return;
+    }
+    handleUpload(file, userInfo);
   };
 
   return (
@@ -385,6 +425,64 @@ const UploadSection = () => {
                   <AlertCircle className="w-8 h-8 text-red-600" />
                 )}
               </div>
+
+              {uploadStatus === 'user-info' && (
+                <div className="space-y-6">
+                  <div className="p-6 bg-background rounded-xl border">
+                    <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                      <User className="w-5 h-5" />
+                      Creator Information
+                    </h3>
+                    <p className="text-muted-foreground mb-6">
+                      Please provide your details to register this asset under your name.
+                    </p>
+                    
+                    <div className="space-y-4">
+                      <div>
+                        <Label htmlFor="creator-name">Full Name</Label>
+                        <Input
+                          id="creator-name"
+                          type="text"
+                          placeholder="Enter your full name"
+                          value={userInfo.name}
+                          onChange={(e) => setUserInfo(prev => ({ ...prev, name: e.target.value }))}
+                          className="mt-1"
+                        />
+                      </div>
+                      
+                      <div>
+                        <Label htmlFor="creator-email">Email Address</Label>
+                        <Input
+                          id="creator-email"
+                          type="email"
+                          placeholder="Enter your email address"
+                          value={userInfo.email}
+                          onChange={(e) => setUserInfo(prev => ({ ...prev, email: e.target.value }))}
+                          className="mt-1"
+                        />
+                      </div>
+                    </div>
+                    
+                    <div className="flex gap-3 mt-6">
+                      <Button 
+                        onClick={handleUserInfoSubmit}
+                        disabled={!userInfo.name.trim() || !userInfo.email.trim()}
+                        className="flex-1"
+                      >
+                        <Shield className="w-4 h-4 mr-2" />
+                        Register & Upload
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        onClick={resetUpload}
+                        className="flex-1"
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {uploadStatus === 'uploading' && (
                 <div className="text-center py-8">
