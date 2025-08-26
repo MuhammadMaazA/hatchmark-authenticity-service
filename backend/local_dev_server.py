@@ -67,20 +67,15 @@ def initiate_upload():
         if not filename.strip():
             return jsonify({'error': 'filename cannot be empty'}), 400
         
-        # Check for duplicate files if file content is provided
         file_size = data.get('fileSize', 0)
         content_type = data.get('contentType', '')
         
-        # Generate unique object key
         upload_id = str(uuid.uuid4())
         object_key = f"uploads/{upload_id}/{filename}"
         
-        # For local development, always use local upload endpoint
-        # In production, this would use real S3 presigned URLs
-        LOCAL_DEV_MODE = True  # Set to False for production
+        LOCAL_DEV_MODE = True
         
         if LOCAL_DEV_MODE:
-            # Use local upload endpoint for development
             local_upload_url = f"http://localhost:3002/uploads/file/{upload_id}"
             
             mock_uploads[upload_id] = {
@@ -99,7 +94,6 @@ def initiate_upload():
                 'uploadId': upload_id
             })
         
-        # Production S3 path (not used in local development)
         session = get_aws_session()
         if session:
             try:
@@ -132,7 +126,6 @@ def initiate_upload():
             except Exception as e:
                 logger.warning(f"Real S3 presigned URL failed: {e}")
         
-        # For local development, use a local upload endpoint instead of S3
         local_upload_url = f"http://localhost:3002/uploads/file/{upload_id}"
         
         mock_uploads[upload_id] = {
@@ -162,18 +155,15 @@ def upload_file_local(upload_id):
         if upload_id not in mock_uploads:
             return jsonify({'error': 'Upload not found'}), 404
         
-        # Get the file data
         file_data = request.get_data()
         
         if not file_data:
             return jsonify({'error': 'No file data provided'}), 400
         
-        # Create uploads directory if it doesn't exist
         import os
         uploads_dir = '/tmp/hatchmark-uploads'
         os.makedirs(uploads_dir, exist_ok=True)
         
-        # Save file locally (for development)
         upload_info = mock_uploads[upload_id]
         filename = upload_info['filename']
         file_path = os.path.join(uploads_dir, f"{upload_id}_{filename}")
@@ -181,14 +171,13 @@ def upload_file_local(upload_id):
         with open(file_path, 'wb') as f:
             f.write(file_data)
         
-        # Update upload status
         mock_uploads[upload_id]['status'] = 'completed'
         mock_uploads[upload_id]['localPath'] = file_path
         mock_uploads[upload_id]['fileSize'] = len(file_data)
         
         logger.info(f"File saved locally: {file_path} ({len(file_data)} bytes)")
         
-        return '', 200  # Return empty response like S3 does
+        return '', 200
         
     except Exception as e:
         logger.error(f"Local file upload failed: {e}")
@@ -229,20 +218,16 @@ def complete_upload():
             'completedAt': datetime.now(timezone.utc).isoformat()
         })
         
-        # Generate asset ID
         asset_id = f"asset_{int(time.time())}_{upload_id[:8]}"
         
-        # Calculate REAL perceptual hash from the uploaded file
         try:
             from PIL import Image
             import io
             import imagehash
             
-            # Find the uploaded file
             file_path = f"/tmp/hatchmark-uploads/{upload_id}_{mock_uploads[upload_id]['filename']}"
             
             if os.path.exists(file_path):
-                # Calculate perceptual hash from the actual file
                 with open(file_path, 'rb') as f:
                     image = Image.open(io.BytesIO(f.read()))
                     perceptual_hash = str(imagehash.phash(image))
@@ -255,7 +240,6 @@ def complete_upload():
             print(f"Error calculating perceptual hash during registration: {e}")
             perceptual_hash = f"hash_{hash(object_key + creator) % 1000000:06d}"
         
-        # Register in mock assets using the REAL perceptual hash
         mock_assets[perceptual_hash] = {
             'assetId': asset_id,
             'filename': mock_uploads[upload_id]['filename'],
@@ -306,7 +290,6 @@ def check_duplicate():
             
             print(f"Duplicate check: Calculated hash: {perceptual_hash}")
             
-            # Check if this hash exists in our registry
             if perceptual_hash in mock_assets:
                 existing_asset = mock_assets[perceptual_hash]
                 return jsonify({
@@ -390,12 +373,10 @@ def verify_asset():
                         
                         print(f"Verification: Calculated perceptual hash: {perceptual_hash}")
                         
-                        # Check if this perceptual hash exists in our registry
                         if perceptual_hash in mock_assets:
                             found_asset = mock_assets[perceptual_hash]
                             print(f"Verification: Found matching asset: {found_asset['assetId']}")
                             
-                            # File found in registry by perceptual hash
                             return jsonify({
                                 'assetId': found_asset['assetId'],
                                 'filename': file.filename,
@@ -409,7 +390,6 @@ def verify_asset():
                         else:
                             print(f"Verification: No matching asset found for hash: {perceptual_hash}")
                             
-                            # File not in registry - return unknown status
                             return jsonify({
                                 'assetId': 'unknown',
                                 'filename': file.filename,
@@ -427,14 +407,11 @@ def verify_asset():
                     return jsonify({'error': 'Please upload an image file'}), 400
             
             else:
-                # JSON verification (legacy support)
                 data = request.get_json()
                 if not data:
                     return jsonify({'error': 'JSON data or file required'}), 400
                 
-                # Handle different verification methods
                 if 'hash' in data:
-                    # Verify by hash
                     asset_hash = data['hash']
                     
                     # Mock verification logic
@@ -453,13 +430,10 @@ def verify_asset():
                         })
                 
                 elif 'objectKey' in data:
-                    # Verify by object key
                     object_key = data['objectKey']
                     
-                    # Generate mock hash for demonstration
                     mock_hash = f"hash_{hash(object_key) % 1000000:06d}"
                     
-                    # Create mock asset record
                     asset_id = str(uuid.uuid4())
                     asset_record = {
                         'assetId': asset_id,
@@ -473,7 +447,6 @@ def verify_asset():
                         }
                     }
                     
-                    # Store in mock registry
                     mock_assets[mock_hash] = asset_record
                     
                     return jsonify({
