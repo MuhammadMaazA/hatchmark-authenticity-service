@@ -4,8 +4,14 @@ Hatchmark Watermarker Service
 A containerized service that processes SQS messages and applies invisible watermarks to digital content
 """
 
-import os
-import json
+import o            watermark_payload = {
+                "service": "hatchmark",
+                "version": "1.0",
+                "assetId": asset_id,
+                "perceptualHash": perceptual_hash,
+                "timestamp": timestamp,
+                "watermarked": datetime.utcnow().isoformat()
+            }json
 import time
 import logging
 import io
@@ -29,12 +35,10 @@ class HatchmarkWatermarker:
     
     def __init__(self):
         """Initialize the watermarker with AWS clients and configuration"""
-        # Get environment variables
         self.sqs_queue_url = os.environ.get('SQS_QUEUE_URL')
         self.ingestion_bucket = os.environ.get('INGESTION_BUCKET')
         self.processed_bucket = os.environ.get('PROCESSED_BUCKET')
         
-        # Validate required environment variables
         if not all([self.sqs_queue_url, self.ingestion_bucket, self.processed_bucket]):
             raise ValueError(
                 "Missing required environment variables: "

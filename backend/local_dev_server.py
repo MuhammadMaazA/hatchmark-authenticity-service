@@ -479,10 +479,8 @@ def add_to_ledger():
         if not data:
             return jsonify({'error': 'JSON data required'}), 400
         
-        # Generate asset ID
         asset_id = str(uuid.uuid4())
         
-        # Create asset record
         asset_record = {
             'assetId': asset_id,
             'perceptualHash': data.get('perceptualHash', ''),
@@ -493,7 +491,6 @@ def add_to_ledger():
             'metadata': data.get('metadata', {})
         }
         
-        # Store in mock registry
         if asset_record['perceptualHash']:
             mock_assets[asset_record['perceptualHash']] = asset_record
         
@@ -585,7 +582,6 @@ def process_asset():
                     'creatorId': 'demo-user'
                 })
                 
-                # Generate processed object key
                 processed_key = object_key.replace('uploads/', 'watermarked/')
                 
                 return jsonify({
@@ -602,7 +598,6 @@ def process_asset():
                 logger.error(f"DynamoDB error: {e}")
                 return jsonify({'error': 'Failed to save to ledger'}), 500
         else:
-            # No AWS session - return basic response without saving to DynamoDB
             processed_key = object_key.replace('uploads/', 'watermarked/')
             return jsonify({
                 'success': True,

@@ -183,7 +183,6 @@ const UploadSection = () => {
   const generateCertificate = async () => {
     if (!uploadResult || !file) return;
 
-    // Generate QR code for verification URL
     const verificationUrl = `http://localhost:8080/app/verify?assetId=${uploadResult.assetId}`;
     let qrCodeDataUrl = '';
     
@@ -192,7 +191,7 @@ const UploadSection = () => {
         width: 150,
         margin: 2,
         color: {
-          dark: '#1e40af', // Blue color to match theme
+          dark: '#1e40af',
           light: '#ffffff'
         }
       });

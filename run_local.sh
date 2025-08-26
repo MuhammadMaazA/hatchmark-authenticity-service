@@ -1,20 +1,22 @@
 #!/bin/bash
 
-# Hatchmark Local Development Server Script
-# This script starts both the backend API and frontend development servers
+e    source .venv/bin/activate
+fi
 
-echo "Starting Hatchmark Digital Authenticity Service..."
-echo "=================================================="
+echo "Installing Python dependencies..."
+cd backend/src
+pip install -r requirements.txt
+cd ../..
 
-# Check if virtual environment exists
+echo "Installing frontend dependencies..."ng Hatchmark Digital Authenticity Service..."
+echo "=="
+
 if [ ! -d ".venv" ]; then
     echo "Creating Python virtual environment..."
     python -m venv .venv
 fi
 
-# Activate virtual environment
 if [ -f ".venv/Scripts/activate" ]; then
-    # Windows
     source .venv/Scripts/activate
 else
     # Linux/Mac
@@ -33,7 +35,7 @@ cd frontend
 npm install
 cd ..
 
-# Create terminal sessions for backend and frontend
+gnome-terminal
 echo ""
 echo "Starting services..."
 echo "Backend API will run on: http://localhost:3002"
