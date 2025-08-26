@@ -225,15 +225,37 @@ def complete_upload():
             'completedAt': datetime.now(timezone.utc).isoformat()
         })
         
-        # Generate asset ID and hash
+        # Generate asset ID
         asset_id = f"asset_{int(time.time())}_{upload_id[:8]}"
-        asset_hash = f"hash_{hash(object_key + creator) % 1000000:06d}"
         
-        # Register in mock assets
-        mock_assets[asset_hash] = {
+        # Calculate REAL perceptual hash from the uploaded file
+        try:
+            from PIL import Image
+            import io
+            import imagehash
+            
+            # Find the uploaded file
+            file_path = f"/tmp/hatchmark-uploads/{upload_id}_{mock_uploads[upload_id]['filename']}"
+            
+            if os.path.exists(file_path):
+                # Calculate perceptual hash from the actual file
+                with open(file_path, 'rb') as f:
+                    image = Image.open(io.BytesIO(f.read()))
+                    perceptual_hash = str(imagehash.phash(image))
+                    print(f"Registration: Calculated perceptual hash: {perceptual_hash}")
+            else:
+                print(f"Warning: File not found at {file_path}, using fallback hash")
+                perceptual_hash = f"hash_{hash(object_key + creator) % 1000000:06d}"
+        
+        except Exception as e:
+            print(f"Error calculating perceptual hash during registration: {e}")
+            perceptual_hash = f"hash_{hash(object_key + creator) % 1000000:06d}"
+        
+        # Register in mock assets using the REAL perceptual hash
+        mock_assets[perceptual_hash] = {
             'assetId': asset_id,
             'filename': mock_uploads[upload_id]['filename'],
-            'perceptualHash': asset_hash,
+            'perceptualHash': perceptual_hash,
             'objectKey': object_key,
             'creator': creator,
             'email': email,
@@ -241,11 +263,11 @@ def complete_upload():
             'status': 'verified'
         }
         
-        logger.info(f"Asset registered: {asset_id}")
+        logger.info(f"Asset registered: {asset_id} with hash: {perceptual_hash}")
         
         return jsonify({
             'assetId': asset_id,
-            'perceptualHash': asset_hash,
+            'perceptualHash': perceptual_hash,
             'timestamp': datetime.now(timezone.utc).isoformat(),
             'message': 'Upload completed and asset registered'
         })
