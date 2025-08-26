@@ -362,16 +362,12 @@ const UploadSection = () => {
           <span class="value">${uploadResult.timestamp ? new Date(uploadResult.timestamp).toLocaleString() : new Date().toLocaleString()}</span>
         </div>
         <div class="field">
-          <span class="label">Storage:</span>
-          <span class="value">Secure Cloud Storage</span>
-        </div>
-        <div class="field">
-          <span class="label">Authentication:</span>
-          <span class="value">Perceptual Hash</span>
-        </div>
-        <div class="field">
           <span class="label">Status:</span>
           <span class="value">Protected & Verified</span>
+        </div>
+        <div class="field">
+          <span class="label">Verification:</span>
+          <span class="value">Digital Signature</span>
         </div>
       </div>
     </div>

@@ -657,6 +657,7 @@ if __name__ == '__main__':
     print("Available endpoints:")
     print("  GET  /health")
     print("  POST /uploads/initiate")
+    print("  POST /uploads/check-duplicate")
     print("  POST /uploads/complete")
     print("  GET  /upload-status/<id>")
     print("  POST /verify")
