@@ -1,6 +1,49 @@
-# Hatchmark - Digital Authenticity Service
+# 🛡️ Hatchmark Digital Authenticity Platform
 
-A comprehensive, cloud-native service for proving digital content authenticity using quantum ledger technology and invisible watermarking.
+**Combat AI-generated misinformation with invisible watermarking technology**
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/MuhammadMaazA/hatchmark-authenticity-service)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Next.js](https://img.shields.io/badge/Next.js-14-black)](https://nextjs.org/)
+[![AWS SAM](https://img.shields.io/badge/AWS-SAM-orange)](https://aws.amazon.com/serverless/sam/)
+
+## 🚀 Quick Deploy
+
+**One-Click Deployment:** Click the "Deploy with Vercel" button above to instantly deploy the frontend.
+
+**Full Documentation:** See [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md) for complete setup instructions.
+
+## Deployment Status: LIVE - PRODUCTION READY
+
+A comprehensive, cloud-native service for proving digital content authenticity using invisible watermarking technology.
+
+- **Frontend:** Next.js with TypeScript on Vercel Edge Network
+- **Backend:** AWS SAM with serverless architecture  
+- **Status:** Production Ready
+
+### Quick Start
+
+1. **Generate Upload URL:**
+   ```bash
+   aws lambda invoke --function-name hatchmark-generate-url-dev \
+     --payload '{"file_name": "artwork.jpg"}' response.json
+   ```
+
+2. **Register Asset:**
+   ```bash
+   aws lambda invoke --function-name hatchmark-register-asset-dev \
+     --payload '{"bucket": "BUCKET_NAME", "key": "artwork.jpg"}' response.json
+   ```
+
+3. **Verify Asset:**
+   ```bash
+   aws lambda invoke --function-name hatchmark-verify-artwork-dev \
+     --payload '{"asset_id": "ASSET_ID"}' response.json
+   ```
+
+📋 **[View Complete Deployment Guide](./DEPLOYMENT_SUMMARY.md)**
+
+---
 
 ## Project Vision
 

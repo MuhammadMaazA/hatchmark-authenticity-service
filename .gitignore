@@ -30,6 +30,23 @@ bun.lockb
 # Environment variables
 .env
 .env.*
+.env.local
+.env.production
+frontend/.env.local
+backend/.env
+
+# Frontend builds
+frontend/.next/
+frontend/out/
+frontend/dist/
+
+# AWS SAM
+backend/.aws-sam/
+*.zip
+packaged-template.yaml
+
+# Vercel
+.vercel
 
 # Operating System
 .DS_Store
@@ -37,6 +54,7 @@ Thumbs.db
 
 # Logs
 *.log
+npm-debug.log*
 
 # Local development
 *.local

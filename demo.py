@@ -14,20 +14,20 @@ BASE_URL = "http://localhost:3002"
 
 def demo_upload_and_watermark():
     """Complete demo of the Hatchmark system"""
-    print("🎯 HATCHMARK DIGITAL AUTHENTICITY DEMO")
+    print("HATCHMARK DIGITAL AUTHENTICITY DEMO")
     print("=" * 50)
     
     # Step 1: Check system health
-    print("\n1️⃣ Checking system health...")
+    print("\n1. Checking system health...")
     health_response = requests.get(f"{BASE_URL}/health")
     if health_response.status_code == 200:
-        print("✅ Backend is healthy")
+        print("Backend is healthy")
     else:
-        print("❌ Backend health check failed")
+        print("Backend health check failed")
         return
     
     # Step 2: Initiate upload
-    print("\n2️⃣ Initiating file upload...")
+    print("\n2. Initiating file upload...")
     filename = "demo-image.jpg"
     upload_response = requests.post(
         f"{BASE_URL}/uploads/initiate",
@@ -37,16 +37,16 @@ def demo_upload_and_watermark():
     
     if upload_response.status_code == 200:
         upload_data = upload_response.json()
-        print(f"✅ Upload initiated: {upload_data['uploadId']}")
-        print(f"📁 Object key: {upload_data['objectKey']}")
+        print(f"Upload initiated: {upload_data['uploadId']}")
+        print(f"Object key: {upload_data['objectKey']}")
         upload_url = upload_data['uploadUrl']
         object_key = upload_data['objectKey']
     else:
-        print("❌ Upload initiation failed")
+        print("Upload initiation failed")
         return
     
     # Step 3: Create and upload a test image
-    print("\n3️⃣ Creating test image...")
+    print("\n3. Creating test image...")
     test_image = Image.new('RGB', (200, 200), color='blue')
     test_image_path = '/tmp/demo_image.jpg'
     test_image.save(test_image_path)
