@@ -1,5 +1,5 @@
 import AWS from 'aws-sdk';
-import { AWS_CONFIG, LAMBDA_FUNCTIONS } from './config';
+import { AWS_CONFIG, LAMBDA_FUNCTIONS } from '../config';
 
 // Configure AWS SDK
 AWS.config.update({

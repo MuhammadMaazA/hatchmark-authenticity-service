@@ -34,6 +34,13 @@ const UploadSection = () => {
       setUploadStatus('checking');
       setErrorMessage('');
       
+      // TODO: Implement duplicate check with AWS Lambda
+      // For now, skip duplicate check and proceed with upload
+      console.log('Skipping duplicate check - not implemented for AWS backend yet');
+      setUploadStatus('user-info');
+      return false;
+      
+      /*
       const formData = new FormData();
       formData.append('file', file);
       
@@ -56,6 +63,7 @@ const UploadSection = () => {
         setUploadStatus('user-info');
         return false;
       }
+      */
     } catch (error) {
       console.error('Duplicate check failed:', error);
       setErrorMessage('Failed to check for duplicates. You can still proceed with upload.');
@@ -104,74 +112,45 @@ const UploadSection = () => {
     setErrorMessage('');
 
     try {
-      console.log('Starting upload process...');
-      // Step 1: Get presigned URL
-      const response = await fetch('http://localhost:3002/uploads/initiate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          filename: uploadFile.name,
-          contentType: uploadFile.type,
-          fileSize: uploadFile.size,
-          creator: userData.name,
-          email: userData.email,
-        }),
-      });
-
-      console.log('Upload initiate response status:', response.status);
+      console.log('Starting AWS upload process...');
+      // Step 1: Generate presigned URL using AWS Lambda
+      console.log('Generating presigned URL via AWS Lambda...');
+      const urlResponse = await generatePresignedUrl(uploadFile.name, uploadFile.type);
+      console.log('Presigned URL generated:', urlResponse);
       
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Upload initiate failed:', errorText);
-        throw new Error(`Failed to initiate upload: ${response.status} ${errorText}`);
-      }
+      // Create upload data in the expected format
+      const uploadData: UploadResult = {
+        uploadId: urlResponse.uploadId,
+        objectKey: uploadFile.name,
+        uploadUrl: urlResponse.presignedUrl || urlResponse.uploadUrl
+      };
 
-      const uploadData: UploadResult = await response.json();
-      console.log('Upload data received:', uploadData);
       setUploadResult(uploadData);
 
       // Step 2: Upload file to S3
-      console.log('Uploading to S3...', uploadData.uploadUrl);
-      const uploadResponse = await fetch(uploadData.uploadUrl, {
-        method: 'PUT',
-        body: uploadFile,
-        headers: {
-          'Content-Type': uploadFile.type,
-        },
-      });
-
-      console.log('S3 upload response status:', uploadResponse.status);
-
-      if (!uploadResponse.ok) {
-        console.error('S3 upload failed:', uploadResponse.status, uploadResponse.statusText);
-        throw new Error(`Failed to upload file: ${uploadResponse.status} ${uploadResponse.statusText}`);
+      console.log('Uploading file to S3...', uploadFile.name);
+      const uploadSuccess = await uploadFileToS3(uploadData.uploadUrl, uploadFile);
+      
+      if (!uploadSuccess) {
+        throw new Error('Failed to upload file to S3');
       }
-
+      
+      console.log('File uploaded to S3 successfully');
       setUploadStatus('processing');
 
-      // Step 3: Notify backend of successful upload
-      const completeResponse = await fetch('http://localhost:3002/uploads/complete', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          uploadId: uploadData.uploadId,
-          objectKey: uploadData.objectKey,
-          creator: userData.name,
-          email: userData.email,
-        }),
-      });
+      // Step 3: Register asset in the system via AWS Lambda
+      console.log('Registering asset via AWS Lambda...');
+      const registrationResult = await registerAsset(
+        uploadData.uploadId,
+        uploadData.objectKey,
+        userData.name,
+        userData.email,
+        uploadFile.size
+      );
+      
+      console.log('Asset registration result:', registrationResult);
 
-      if (!completeResponse.ok) {
-        console.error('Upload completion failed:', completeResponse.status);
-        throw new Error('Failed to complete upload');
-      }
-
-      const completionData = await completeResponse.json();
-      setUploadResult(prev => prev ? { ...prev, ...completionData } : completionData);
+      setUploadResult(prev => prev ? { ...prev, ...registrationResult } : { ...uploadData, ...registrationResult });
       setUploadStatus('success');
 
     } catch (error) {
@@ -184,7 +163,7 @@ const UploadSection = () => {
   const generateCertificate = async () => {
     if (!uploadResult || !file) return;
 
-    const verificationUrl = `http://localhost:8080/app/verify?assetId=${uploadResult.assetId}`;
+    const verificationUrl = `https://hatchmark-authenticity-service.vercel.app/app/verify?assetId=${uploadResult.assetId}`;
     let qrCodeDataUrl = '';
     
     try {
