@@ -5,7 +5,7 @@ Description: Hatchmark Digital Authenticity Service - Complete SAM Application
 Globals:
   Function:
     Timeout: 30
-    Runtime: python3.11
+    Runtime: python3.13
     Environment:
       Variables:
         PYTHONPATH: /opt/python

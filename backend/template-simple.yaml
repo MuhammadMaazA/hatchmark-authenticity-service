@@ -8,8 +8,8 @@ Description: >
 # Global configuration for all Lambda functions
 Globals:
   Function:
-    Runtime: python3.11
-    Architectures: [arm64]
+    Runtime: python3.13
+    Architectures: [x86_64]
     Timeout: 30
     MemorySize: 256
     Environment:
