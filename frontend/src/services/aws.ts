@@ -1,15 +1,36 @@
 import AWS from 'aws-sdk';
 import { AWS_CONFIG, LAMBDA_FUNCTIONS } from '../config';
 
-// Configure AWS SDK with explicit credentials
-AWS.config.update({
-  region: AWS_CONFIG.REGION,
-  accessKeyId: import.meta.env.VITE_AWS_ACCESS_KEY_ID,
-  secretAccessKey: import.meta.env.VITE_AWS_SECRET_ACCESS_KEY,
+// Get credentials from environment variables
+const awsAccessKeyId = import.meta.env.VITE_AWS_ACCESS_KEY_ID;
+const awsSecretAccessKey = import.meta.env.VITE_AWS_SECRET_ACCESS_KEY;
+const awsRegion = AWS_CONFIG.REGION;
+
+console.log('AWS Config:', {
+  region: awsRegion,
+  hasAccessKey: !!awsAccessKeyId,
+  hasSecretKey: !!awsSecretAccessKey
 });
 
-const lambda = new AWS.Lambda();
-const s3 = new AWS.S3();
+// Configure AWS SDK with explicit credentials
+AWS.config.update({
+  region: awsRegion,
+  accessKeyId: awsAccessKeyId,
+  secretAccessKey: awsSecretAccessKey,
+});
+
+// Create AWS service instances with explicit credentials
+const lambda = new AWS.Lambda({
+  region: awsRegion,
+  accessKeyId: awsAccessKeyId,
+  secretAccessKey: awsSecretAccessKey,
+});
+
+const s3 = new AWS.S3({
+  region: awsRegion,
+  accessKeyId: awsAccessKeyId,
+  secretAccessKey: awsSecretAccessKey,
+});
 
 export interface UploadResponse {
   uploadId: string;
@@ -39,6 +60,9 @@ export interface DuplicateCheckResponse {
 // Generate presigned URL for file upload
 export const generatePresignedUrl = async (filename: string, contentType: string): Promise<UploadResponse> => {
   try {
+    console.log('🚀 Starting generatePresignedUrl with:', { filename, contentType });
+    console.log('🔑 Lambda function name:', LAMBDA_FUNCTIONS.GENERATE_URL);
+    
     const params = {
       FunctionName: LAMBDA_FUNCTIONS.GENERATE_URL,
       Payload: JSON.stringify({
@@ -48,7 +72,9 @@ export const generatePresignedUrl = async (filename: string, contentType: string
       })
     };
 
+    console.log('📤 Invoking Lambda with params:', params);
     const result = await lambda.invoke(params).promise();
+    console.log('📥 Lambda response:', result);
     
     if (result.Payload) {
       const response = JSON.parse(result.Payload as string);
