@@ -1,11 +1,11 @@
 import AWS from 'aws-sdk';
 import { AWS_CONFIG, LAMBDA_FUNCTIONS } from '../config';
 
-// Configure AWS SDK
+// Configure AWS SDK with explicit credentials
 AWS.config.update({
   region: AWS_CONFIG.REGION,
-  // For local development, AWS credentials will be read from ~/.aws/credentials
-  // For production (Vercel), they'll be set via environment variables
+  accessKeyId: import.meta.env.VITE_AWS_ACCESS_KEY_ID,
+  secretAccessKey: import.meta.env.VITE_AWS_SECRET_ACCESS_KEY,
 });
 
 const lambda = new AWS.Lambda();
