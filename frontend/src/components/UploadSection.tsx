@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Upload, FileImage, CheckCircle, AlertCircle, Shield, Download, User, Mail } from "lucide-react";
 import QRCode from 'qrcode';
+import { generatePresignedUrl, uploadFileToS3, registerAsset } from "@/services/aws";
 
 interface UploadResult {
   uploadId: string;
