@@ -1,7 +1,7 @@
-import { Button } from "@/components/ui/button";
+import { Button } from "./ui/button";
 import { ArrowRight, CheckCircle } from "lucide-react";
 import { Link } from "react-router-dom";
-import heroImage from "@/assets/hero-minimal.jpg";
+import heroImage from "../assets/hero-minimal.jpg";
 
 const HeroSection = () => {
   return (

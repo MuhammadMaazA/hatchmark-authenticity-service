@@ -1,8 +1,8 @@
-import { Button } from "@/components/ui/button";
+import { Button } from "./ui/button";
 import { Menu, X } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { ThemeToggle } from "@/components/theme-toggle";
+import { ThemeToggle } from "./theme-toggle";
 
 const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
