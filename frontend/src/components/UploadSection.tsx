@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Upload, FileImage, CheckCircle, AlertCircle, Shield, Download, User, Mail } from "lucide-react";
 import QRCode from 'qrcode';
-import { generatePresignedUrl, uploadFileToS3, registerAsset } from "@/services/aws";
+import { generatePresignedUrl, uploadFileToS3, registerAsset, checkForDuplicate } from "../services/aws";
 
 interface UploadResult {
   uploadId: string;
@@ -29,31 +29,14 @@ const UploadSection = () => {
   const [userInfo, setUserInfo] = useState<UserInfo>({ name: '', email: '' });
   const [duplicateInfo, setDuplicateInfo] = useState<any>(null);
 
-  const checkForDuplicate = async (file: File) => {
+  const handleDuplicateCheck = async (file: File) => {
     try {
       setUploadStatus('checking');
       setErrorMessage('');
       
-      // TODO: Implement duplicate check with AWS Lambda
-      // For now, skip duplicate check and proceed with upload
-      console.log('Skipping duplicate check - not implemented for AWS backend yet');
-      setUploadStatus('user-info');
-      return false;
-      
-      /*
-      const formData = new FormData();
-      formData.append('file', file);
-      
-      const response = await fetch('http://localhost:3002/uploads/check-duplicate', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to check for duplicates');
-      }
-
-      const result = await response.json();
+      // Use AWS Lambda for duplicate check
+      console.log('Checking for duplicates via AWS Lambda...');
+      const result = await checkForDuplicate(file);
       
       if (result.isDuplicate) {
         setDuplicateInfo(result.existingAsset);
@@ -63,10 +46,9 @@ const UploadSection = () => {
         setUploadStatus('user-info');
         return false;
       }
-      */
     } catch (error) {
       console.error('Duplicate check failed:', error);
-      setErrorMessage('Failed to check for duplicates. You can still proceed with upload.');
+      // If duplicate check fails, proceed with upload
       setUploadStatus('user-info');
       return false;
     }
@@ -91,7 +73,7 @@ const UploadSection = () => {
       const file = droppedFiles[0];
       if (file.type.startsWith('image/')) {
         setFile(file);
-        await checkForDuplicate(file);
+        await handleDuplicateCheck(file);
       } else {
         setErrorMessage('Please upload an image file (JPG, PNG, etc.)');
         setUploadStatus('error');
@@ -103,7 +85,7 @@ const UploadSection = () => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
       setFile(selectedFile);
-      await checkForDuplicate(selectedFile);
+      await handleDuplicateCheck(selectedFile);
     }
   }, []);
 

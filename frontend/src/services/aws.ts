@@ -24,6 +24,18 @@ export interface VerificationResponse {
   assetId?: string;
 }
 
+export interface DuplicateCheckResponse {
+  isDuplicate: boolean;
+  perceptualHash?: string;
+  existingAsset?: {
+    assetId: string;
+    creator: string;
+    timestamp: string;
+    originalFilename: string;
+  };
+  similarAssets?: any[];
+}
+
 // Generate presigned URL for file upload
 export const generatePresignedUrl = async (filename: string, contentType: string): Promise<UploadResponse> => {
   try {
@@ -55,8 +67,44 @@ export const generatePresignedUrl = async (filename: string, contentType: string
   }
 };
 
+// Check for duplicate images
+export const checkForDuplicate = async (file: File): Promise<DuplicateCheckResponse> => {
+  try {
+    // Convert file to base64
+    const fileBuffer = await file.arrayBuffer();
+    const uint8Array = new Uint8Array(fileBuffer);
+    const base64File = btoa(Array.from(uint8Array, byte => String.fromCharCode(byte)).join(''));
+
+    const params = {
+      FunctionName: LAMBDA_FUNCTIONS.DUPLICATE_CHECK,
+      Payload: JSON.stringify({
+        fileData: base64File,
+        filename: file.name,
+        contentType: file.type
+      })
+    };
+
+    const result = await lambda.invoke(params).promise();
+    
+    if (result.Payload) {
+      const response = JSON.parse(result.Payload as string);
+      
+      if (response.errorMessage) {
+        throw new Error(response.errorMessage);
+      }
+      
+      return JSON.parse(response.body || response);
+    }
+    
+    throw new Error('No response from Lambda function');
+  } catch (error) {
+    console.error('Error checking for duplicates:', error);
+    throw error;
+  }
+};
+
 // Upload file to S3 using presigned URL
-export const uploadFileToS3 = async (file: File, presignedUrl: string): Promise<void> => {
+export const uploadFileToS3 = async (presignedUrl: string, file: File): Promise<boolean> => {
   try {
     const response = await fetch(presignedUrl, {
       method: 'PUT',
@@ -69,6 +117,8 @@ export const uploadFileToS3 = async (file: File, presignedUrl: string): Promise<
     if (!response.ok) {
       throw new Error(`Upload failed: ${response.statusText}`);
     }
+    
+    return true;
   } catch (error) {
     console.error('Error uploading file:', error);
     throw error;
@@ -106,11 +156,23 @@ export const verifyArtwork = async (filename: string): Promise<VerificationRespo
 };
 
 // Register asset in DynamoDB
-export const registerAsset = async (assetData: any): Promise<any> => {
+export const registerAsset = async (
+  uploadId: string, 
+  objectKey: string, 
+  creator: string, 
+  email: string, 
+  fileSize: number
+): Promise<any> => {
   try {
     const params = {
       FunctionName: LAMBDA_FUNCTIONS.REGISTER_ASSET,
-      Payload: JSON.stringify(assetData)
+      Payload: JSON.stringify({
+        uploadId,
+        objectKey,
+        creator,
+        email,
+        fileSize
+      })
     };
 
     const result = await lambda.invoke(params).promise();
@@ -136,5 +198,6 @@ export default {
   generatePresignedUrl,
   uploadFileToS3,
   verifyArtwork,
-  registerAsset
+  registerAsset,
+  checkForDuplicate
 };

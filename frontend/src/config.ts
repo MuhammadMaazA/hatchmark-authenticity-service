@@ -9,7 +9,8 @@ export const DEMO_API_URL = import.meta.env.VITE_DEMO_API_URL;
 export const LAMBDA_FUNCTIONS = {
     GENERATE_URL: import.meta.env.VITE_LAMBDA_GENERATE_URL || 'hatchmark-generate-url-dev',
     REGISTER_ASSET: import.meta.env.VITE_LAMBDA_REGISTER_ASSET || 'hatchmark-register-asset-dev', 
-    VERIFY_ARTWORK: import.meta.env.VITE_LAMBDA_VERIFY_ARTWORK || 'hatchmark-verify-artwork-dev'
+    VERIFY_ARTWORK: import.meta.env.VITE_LAMBDA_VERIFY_ARTWORK || 'hatchmark-verify-artwork-dev',
+    DUPLICATE_CHECK: import.meta.env.VITE_LAMBDA_DUPLICATE_CHECK || 'hatchmark-duplicate-check-dev'
 } as const;
 
 // AWS Configuration with Demo Protection

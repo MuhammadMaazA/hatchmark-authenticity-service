@@ -165,6 +165,26 @@ Resources:
             Path: /verify
             Method: POST
 
+  DuplicateCheckFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'hatchmark-duplicate-check-${Environment}'
+      CodeUri: src/handlers/
+      Handler: duplicate_check_handler.lambda_handler
+      Timeout: 60
+      Environment:
+        Variables:
+          ASSETS_TABLE: !Ref AssetsTable
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref AssetsTable
+      Events:
+        HttpPost:
+          Type: HttpApi
+          Properties:
+            Path: /uploads/check-duplicate
+            Method: POST
+
   # Step Functions State Machine
   HatchmarkWorkflow:
     Type: AWS::Serverless::StateMachine
