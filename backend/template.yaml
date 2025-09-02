@@ -5,7 +5,7 @@ Description: Hatchmark Digital Authenticity Service - Complete SAM Application
 Globals:
   Function:
     Timeout: 30
-    Runtime: python3.13
+    Runtime: python3.12
     Environment:
       Variables:
         PYTHONPATH: /opt/python
@@ -15,13 +15,19 @@ Globals:
         - "http://localhost:3000"
         - "https://*.vercel.app"
         - "https://*.hatchmark.io"
+        - "*"
       AllowHeaders: 
         - "Content-Type"
         - "Authorization"
+        - "X-Requested-With"
+        - "Accept"
       AllowMethods: 
         - "GET"
         - "POST"
         - "OPTIONS"
+        - "PUT"
+      AllowCredentials: false
+      MaxAge: 86400
 
 Parameters:
   Environment:
